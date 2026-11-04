@@ -2,7 +2,34 @@
 
 **Windows verification: 4 November 2026. Software tests are not market-performance evidence.**
 
-## Current branch: beginner desk and broad scan
+## Current branch: trade decision toolkit
+
+The suite now contains **265 tests**. Toolkit coverage adds strict completed-bar
+entry timing, first-trigger expiry, missing candles, downward entries, cost-capped
+exit scenarios, future-bar exclusion, repeatable outcome resampling, gap losses
+worse than 1R, RSS date/link/tag handling, alert staleness and identity checks,
+once-only delivery, active-alert visibility/capacity, budget validation, journal
+preservation, saved-scan invalidation and API write-token enforcement.
+
+The Edge browser smoke test passes the complete desktop and 390px mobile flow:
+150-stock scan, card/full charts, entry/exit scenarios, replay, news fixture,
+alert creation/checking, call/futures contracts, editable practice budget and a
+reload restoring the same saved scan and selected trade type. No JavaScript
+errors or horizontal overflow were observed. Browser data is explicitly fictional;
+the runner is `artifacts/browser_beginner_tips.py` in the source workspace.
+
+A read-only live check returned India-focused headlines from Google News RSS
+without an API key. Headline results are search matches, not verified company
+event clearance. Existing public history/source checks remain documented below.
+No authenticated broker account or live trade was used for this verification.
+
+The toolkit is independent application code inspired by the reviewed repository;
+no external Claude skill/plugin was installed. Replay covers fixed chart rules
+and underlying scenarios, not a validated claim about future profits or option
+premiums. The cleaned ZIP includes the backend/frontend source and regression
+tests while excluding runtime databases, credentials and browser artifacts.
+
+## Previous current-branch check: beginner desk and broad scan
 
 **246 automated tests passed**. Added coverage exercises scans above 25 instruments,
 symbol/ISIN membership matching, official-source failure and catalogue fallback,

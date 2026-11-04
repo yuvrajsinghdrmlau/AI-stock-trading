@@ -11,6 +11,43 @@ model is bundled. More model complexity is not proof of a trading advantage.
 
 ### Current branch: beginner trade ideas
 
+#### Trade toolkit: entry, exits, replay, headlines and alerts
+
+Every stock/underlying card now has **Trade toolkit**:
+
+- **Entry & exits:** first completed 15-minute close beyond the 09:15–09:45 IST
+  opening range, upward or downward. Forming/missing candles are rejected and
+  the first trigger expires rather than being reset by later candles. Compare
+  ATR, range-midpoint and range-edge stops with 1R–4R targets. Scenario share
+  counts include estimated costs and cash/risk caps; they are not F&O lot sizing.
+- **Watch entry:** opt in to refresh one stock every minute while its entry tab
+  is open and the page is visible. Closing/switching the tab stops the watcher.
+- **Historical replay:** fixed chart-rule outcomes on up to 3,000 completed bars,
+  non-overlapping trades, next-open fills, estimated costs/slippage and gap stops
+  that can lose more than 1R. The last 30% is reported separately with no tuning.
+  Optional 1,000 seeded five-trade-block resamples show historical scenario bands
+  in R. These are not a current-trade probability or a saved-model backtest.
+  F&O/directional replay is an underlying next-open proxy, not option-premium P&L
+  or an exact replay of the current live trigger.
+- **Headlines:** on-demand India-focused Google News RSS, dates/publishers,
+  keyword event tags and an official NSE announcements link. Cached for ten
+  minutes. Search coverage is incomplete; an empty result does not clear news risk.
+- **Price alerts:** persist up to 20 active underlying-price levels for seven
+  days. Recent matching-identity snapshots can trigger each alert once. Use
+  **My price alerts** to check now or opt into visible-page minute checks.
+  These local reminders neither run after the page closes nor submit an order.
+
+**Set practice budget** adjusts virtual capital and conservative risk/allocation
+limits. Edits are locked once the journal contains trades and while a scan runs.
+Changing the budget clears saved scans so quantities are re-evaluated. Scan results
+and trade-type/universe preferences survive reloads; saved prices keep their
+original timestamps and expired setups remain expired until refreshed.
+
+The new tools are implemented for this application. The reviewed
+[day-trader-skill repository](https://github.com/Jakeschincariol/day-trader-skill)
+provided workflow inspiration; no Claude plugin, external skill or broker executor
+was installed.
+
 The app now opens **Your trade ideas**. Pick **Delivery**, **Intraday**, **Swing**,
 **Calls & puts**, or **Futures**. The beginner guide explains entries, stops, targets,
 premium, lots and the manual broker steps. Cards include a small historical graph;

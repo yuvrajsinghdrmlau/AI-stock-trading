@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 import uuid
+import json
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,6 +60,12 @@ class DerivativeReview(BaseModel):
 def register_v2(app,store,universe,broker,models,desk):
     worker=ThreadPoolExecutor(max_workers=1,thread_name_prefix='provider-read')
     jobs={}; lock=threading.Lock(); attempts={}
+    def job_running():
+        with lock:return any(j['status']=='running' for j in jobs.values())
+    from .trade_tools import register_tools
+    register_tools(app,store,universe,broker,desk,job_running)
+    with store.db() as db:
+        db.execute('CREATE TABLE IF NOT EXISTS recommendation_cache(id TEXT PRIMARY KEY,body TEXT)')
 
     def launch(task):
         with lock:
@@ -276,8 +283,19 @@ def register_v2(app,store,universe,broker,models,desk):
                     update(3+int(95*processed/len(instruments)),f'{processed} of {len(instruments)} stocks checked',snapshot())
             result=snapshot()
             result['cancelled']=update.cancelled()
+            with store.db() as db:
+                db.execute('INSERT OR REPLACE INTO recommendation_cache VALUES(?,?)',
+                           ('|'.join((body.mode,body.scope,body.holding)),json.dumps(result,allow_nan=False)))
             return result
         return launch(work)
+
+    @app.get('/api/recommendations/latest')
+    def latest_recommendations(mode:str='Delivery',scope:str='nifty500',holding:str='Intraday'):
+        if mode not in (*MODE_STRATEGIES,'Options','Futures') or scope not in SCOPES or holding not in ('Intraday','Swing'):
+            raise ValueError('Invalid saved-scan selection.')
+        with store.db() as db:
+            row=db.execute('SELECT body FROM recommendation_cache WHERE id=?',('|'.join((mode,scope,holding)),)).fetchone()
+        return {**json.loads(row['body']),'cached':True} if row else None
 
     @app.post('/api/recommendations/review-derivative')
     def review_derivative(body:DerivativeReview):

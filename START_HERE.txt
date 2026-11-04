@@ -15,6 +15,12 @@ INDIA QUANT 2.1 - LOCAL CONDITIONAL TRADE RESEARCH
    Authorized broker quotes can unlock current-session contract levels when checks pass.
 9. Open a plan, recheck current prices and use your own broker for any manual trade.
    The app does not send an order. Advanced research tools are in the sidebar menu.
+10. Open a stock's Trade toolkit for Entry & exits, Historical replay, Headlines
+    and Price alerts. Start with the Entry tab; load/recheck candles when needed.
+11. Set practice budget adjusts virtual capital before you record any journal trades.
+    My price alerts checks your reminders now or every minute while the app is visible.
+12. Saved scans and your selected trade type survive reloads. Refresh for current
+    prices; saved timestamps are not changed to look live.
 
 The downloaded directory is provider-backed. Search is not limited to the 25-instrument
 watchlist. No profitable pretrained model, never-fail filter or real order execution.

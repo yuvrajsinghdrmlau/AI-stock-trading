@@ -2,6 +2,13 @@
 const discoveryState={mode:'Delivery',scope:'nifty500',holding:'Intraday',job:null,result:null,busy:false,progress:0,message:'',error:null,request:0,limit:12,filter:'setups',query:''};
 const tipModes={Delivery:['Delivery','Buy shares; hold for weeks'],Intraday:['Intraday','Buy shares; exit the same day'],Swing:['Swing','Hold shares for a few days'],Options:['Calls & puts','Options on stocks and indices'],Futures:['Futures','Buy or sell a listed futures contract']};
 const tipScopes={nifty500:'Nifty 500 · broad market',nifty200:'Nifty 200',nifty100:'Nifty 100',nifty50:'Nifty 50',all_nse:'All regular NSE stocks',fo:'All NSE F&O stocks & indices'};
+try{
+  const saved=JSON.parse(localStorage.getItem('indiaQuant.tradePreferences')||'{}');
+  if(Object.hasOwn(tipModes,saved.mode))discoveryState.mode=saved.mode;
+  if(Object.hasOwn(tipScopes,saved.scope))discoveryState.scope=saved.scope;
+  if(['Intraday','Swing'].includes(saved.holding))discoveryState.holding=saved.holding;
+}catch{}
+function saveDiscoveryPreferences(){try{localStorage.setItem('indiaQuant.tradePreferences',JSON.stringify({mode:discoveryState.mode,scope:discoveryState.scope,holding:discoveryState.holding}));}catch{}}
 function tipTime(value){
   if(!value)return 'Time unavailable';
   const date=new Date(value);
@@ -55,7 +62,7 @@ function stockTipCard(row){
     <div class="tip-price"><strong>${q.price==null?'Unavailable':money(q.price,2)}</strong><div><span>${h(q.label)}</span><small>${h(q.time?tipTime(q.time)+' · '+tipAge(q.time):'Refresh to request market data')}</small></div></div>
     ${tipMiniChart(row)}<p class="tip-explanation" data-tip-explanation>${h(tipReason(row))}</p>
     ${t.buy?`<div class="tip-action-levels">${tipLevels(['Buy reference','Stop-loss','Target'],[e.reference,e.stop_at_reference,e.target_at_reference])}<p>Buy range: <strong>${money(e.min,2)} – ${money(e.max,2)}</strong></p><p class="small">${row.plan?.quantity||0} shares in the practice account · planned loss ${money(row.plan?.planned_loss_with_estimated_costs||0,2)}</p><p class="tip-expiry">Entry ${h(tipTime(p.entry_window))} · recheck by ${h(tipTime(p.expires_at))}</p><p class="small muted">At another fill: stop = entry − ${money(e.stop_distance,2)}; target = entry + ${money(e.target_distance,2)}.</p></div>`:''}
-    <div class="tip-card-actions">${row.dataset_id?`<button class="button ${t.buy?'primary':'subtle'}" data-review-key="${h(i.instrument_key)}" data-review-strategy="${h(row.strategy)}" data-review-latest="true">${t.buy?'Review trade':'Why wait?'}</button>`:''}<button class="button subtle" data-stock="${h(i.instrument_key)}" data-stock-strategy="${h(row.strategy||'trend_pullback')}">See chart</button></div>
+    <div class="tip-card-actions">${row.dataset_id?`<button class="button ${t.buy?'primary':'subtle'}" data-review-key="${h(i.instrument_key)}" data-review-strategy="${h(row.strategy)}" data-review-latest="true">${t.buy?'Review trade':'Why wait?'}</button>`:''}<button class="button subtle" data-stock="${h(i.instrument_key)}" data-stock-strategy="${h(row.strategy||'trend_pullback')}">See chart</button>${toolButton(row)}</div>
     <details class="tip-evidence"><summary>Signal details</summary><p>${h(row.strategy_name||'Entry conditions')} · ${h(p.basis==='VALIDATED_MODEL_AND_RULES'?'Model and rules':'Technical rules')}</p><p>Signal candle: ${h(tipTime(row.last_bar))}</p><p>Source: ${h(q.source||'Unavailable')}</p>${(p.reasons||[]).map(r=>`<p>${h(r)}</p>`).join('')}</details></article>`;
 }
 function derivativeTipCard(row){
@@ -67,26 +74,32 @@ function derivativeTipCard(row){
     ${tipMiniChart(row)}<p class="tip-explanation" data-tip-explanation>${h(tipReason(row))}</p>
     ${c?`<div class="tip-contract"><strong>${h(c.symbol)}</strong><span>Expiry ${h(c.expiry)} · ${c.lot_size} units per lot${c.strike?' · strike '+money(c.strike,2):''}</span></div>`:''}
     ${l&&!t.expired?`<div class="tip-action-levels"><p class="tip-level-caption">${row.mode==='Options'?'Option premium':'Futures price'} per unit</p>${tipLevels(['Entry reference','Stop-loss','Target'],[l.entry,l.stop,l.target])}<p>1 lot = ${l.quantity} units · planned stop risk ${money(l.planned_risk,2)}</p>${l.premium_cost?`<p>Premium to pay: ${money(l.premium_cost,2)}<br>Full premium at risk: ${money(l.maximum_premium_loss,2)}</p>`:'<p>Check required futures margin on your broker.</p>'}<p class="small muted">${h(l.basis)}. Gaps can exceed the planned stop loss.</p></div>`:u?`<div class="tip-underlying"><p class="tip-level-caption">Underlying trigger · these are ${h(i.symbol)} levels</p>${tipLevels([u.side==='ABOVE'?'Cross above':'Cross below','Invalidation','Target'],[u.trigger,u.stop,u.target])}<p class="small muted">${row.mode==='Options'?'These numbers are stock/index levels, not option premiums.':'These numbers are stock/index levels, not futures entry prices.'}</p></div>`:''}
-    <div class="tip-card-actions"><button class="button ${t.buy?'primary':'subtle'}" data-derivative-review="${h(i.instrument_key)}">${t.buy?'Recheck & review trade':'Check contract & next steps'}</button><button class="button subtle" data-stock="${h(i.instrument_key)}" data-stock-strategy="${h(row.strategy)}">See chart</button></div>
+    <div class="tip-card-actions"><button class="button ${t.buy?'primary':'subtle'}" data-derivative-review="${h(i.instrument_key)}">${t.buy?'Recheck & review trade':'Check contract & next steps'}</button><button class="button subtle" data-stock="${h(i.instrument_key)}" data-stock-strategy="${h(row.strategy)}">See chart</button>${toolButton(row)}</div>
     <details class="tip-evidence"><summary>Why this direction?</summary><p>${p.direction==='UP'?'Upward':p.direction==='DOWN'?'Downward':'No confirmed'} trend. EMA trend, RSI momentum and a confirming candle must agree. Stock volume must pass; index volume is not used.</p><p>Signal candle ${h(tipTime(row.last_bar))}. This rules match is not a measured probability of profit.</p><p>Contract selection uses listed expiries at least seven days away and a strike closest to the underlying price. Quotes can select another nearby liquid strike.</p></details></article>`;
 }
 function beginnerGuide(){return `<details class="tips-guide"><summary>New to trading? Start here <span>What these trade types and numbers mean</span></summary><div class="tips-guide-grid"><div><h3>1. Pick a trade type</h3><p><strong>Delivery:</strong> own shares and hold them for weeks. <strong>Swing:</strong> hold shares for days. <strong>Intraday:</strong> close the trade the same day.</p><p><strong>Call:</strong> an option that benefits from an upward move. <strong>Put:</strong> an option that benefits from a downward move. <strong>Futures:</strong> a leveraged contract you can buy or sell.</p></div><div><h3>2. Read the plan</h3><p><strong>Entry:</strong> where the setup allows a trade. <strong>Stop-loss:</strong> the exit level if it moves against you. <strong>Target:</strong> the planned profit-taking level.</p><p><strong>Lot:</strong> the minimum number of F&O units in one contract. Options can lose the full premium; futures require margin and can lose more than it.</p></div><div><h3>3. Practise, then use your broker</h3><p>Begin with Delivery and a small practice position. A WAIT card means the conditions do not match; it is useful to skip a trade.</p><p>Recheck current prices, expiry and quantity on your own broker. Entry, stop and target orders must be placed there. A stop price does not guarantee a fill.</p></div></div></details>`;}
 async function renderRecommendations(){
   stopDeskTimer();const config=await api('/market/config');if(state.page!=='recommendations')return;marketState.brokers=config.brokers;
+  if(!discoveryState.result&&!discoveryState.busy&&!discoveryState.error){
+    try{const cached=await api('/recommendations/latest?'+new URLSearchParams({mode:discoveryState.mode,scope:discoveryState.scope,holding:discoveryState.holding}));if(cached?.rows)discoveryState.result=cached;}catch(err){discoveryState.error=err.message;}
+    if(state.page!=='recommendations')return;
+  }
   const derivatives=['Options','Futures'].includes(discoveryState.mode);
   $('#content').innerHTML=`${config.catalogue.source_headers?.fixture?'<div class="banner"><p>OFFLINE UI TEST: fictional listings and prices, used to verify the interface.</p></div>':''}<div class="tips-heading"><div><div class="eyebrow">A CLEAR PLAN BEFORE EVERY TRADE</div><h1>Your trade ideas</h1><p>Choose your trade type. We find setups across the market for you.</p></div><button class="button primary" data-discovery-refresh>Find trade ideas</button></div>
     <div class="tips-modes" aria-label="Trade type">${Object.entries(tipModes).map(([mode,[label,description]])=>`<button data-tip-mode="${mode}" class="${discoveryState.mode===mode?'selected':''}"><strong>${h(label)}</strong><span>${h(description)}</span></button>`).join('')}</div>
     <div class="tips-toolbar"><label for="tips-universe">Stocks to scan<select id="tips-universe">${Object.entries(tipScopes).map(([key,label])=>`<option value="${key}" ${key===discoveryState.scope?'selected':''}>${h(label)}</option>`).join('')}</select></label>${derivatives?`<label for="tips-holding">Time horizon<select id="tips-holding"><option value="Intraday" ${discoveryState.holding==='Intraday'?'selected':''}>Today · check entry & contract price</option><option value="Swing" ${discoveryState.holding==='Swing'?'selected':''}>Next session · trend ideas</option></select></label>`:''}<p>No watchlist or individual search needed.<br><span>Practice capital ${money(state.boot.account.settings.capital)} · risk per trade ${state.boot.account.settings.risk_pct}%</span></p></div>
-    ${beginnerGuide()}<div id="discovery-progress" role="status" aria-live="polite"></div><div id="tips-summary"></div>
+    <div class="tip-card-actions tips-personal-tools"><button class="button subtle" data-open-alert-center>My price alerts</button><button class="button subtle" data-open-practice-budget>Set practice budget</button><span class="small muted">Open a stock’s Trade toolkit for entry timing, replay and headlines.</span></div>${beginnerGuide()}<div id="discovery-progress" role="status" aria-live="polite"></div><div id="tips-summary"></div>
     <div class="tips-results-controls"><label for="tips-view">Show<select id="tips-view"><option value="setups">Trade setups first</option><option value="ready">Ready to review</option><option value="all">All checked stocks</option></select></label><label for="tips-search">Find in results<input id="tips-search" type="search" placeholder="Stock or company name" value="${h(discoveryState.query)}"></label></div><div id="stock-tips"></div><div id="tips-more"></div>
     <details class="tips-scan-details"><summary>Coverage & data sources</summary><div id="discovery-basket">Start a scan to see stock coverage.</div></details>`;
   $('#tips-view').value=discoveryState.filter;updateDiscoveryControls();
   if(discoveryState.result)showDiscovery(discoveryState.result);
+  if(discoveryState.result?.cached&&!discoveryState.busy)discoveryProgress('Saved scan from '+tipTime(discoveryState.result.generated_at)+'. Refresh for current setups.');
   if(discoveryState.busy){discoveryProgress(discoveryState.message,discoveryState.progress);return;}
   if(discoveryState.error)discoveryProgress(discoveryState.error,null,true);
   if(!discoveryState.result&&!discoveryState.error)await scanDiscovery(false);
 }
 function updateDiscoveryControls(){
+  for(const b of document.querySelectorAll('[data-open-practice-budget]'))b.disabled=discoveryState.busy;
   for(const b of document.querySelectorAll('[data-discovery-refresh]')){b.disabled=discoveryState.busy;b.textContent=discoveryState.busy?'Scanning…':'Find / refresh trade ideas';}
   for(const b of document.querySelectorAll('[data-tip-mode]')){b.disabled=discoveryState.busy;b.classList.toggle('selected',b.dataset.tipMode===discoveryState.mode);}
   for(const id of ['tips-universe','tips-holding']){const el=document.getElementById(id);if(el)el.disabled=discoveryState.busy;}
@@ -175,14 +188,14 @@ async function reviewDerivative(key,button){
 document.addEventListener('click',async e=>{
   if(e.target.closest('[data-discovery-refresh]'))scanDiscovery(true);
   const mode=e.target.closest('[data-tip-mode]');
-  if(mode&&!discoveryState.busy&&mode.dataset.tipMode!==discoveryState.mode){discoveryState.mode=mode.dataset.tipMode;discoveryState.result=null;discoveryState.error=null;await renderRecommendations();}
+  if(mode&&!discoveryState.busy&&mode.dataset.tipMode!==discoveryState.mode){discoveryState.mode=mode.dataset.tipMode;saveDiscoveryPreferences();discoveryState.result=null;discoveryState.error=null;await renderRecommendations();}
   if(e.target.closest('[data-more-tips]')){discoveryState.limit+=12;showDiscovery(discoveryState.result);}
   const review=e.target.closest('[data-derivative-review]');if(review)reviewDerivative(review.dataset.derivativeReview,review);
   const stop=e.target.closest('[data-stop-scan]');if(stop&&discoveryState.job){stop.disabled=true;try{await api('/market/jobs/'+discoveryState.job+'/cancel',{});discoveryProgress('Stopping after the current batch…',discoveryState.progress);}catch(err){toast(err.message,true);}}
 });
 document.addEventListener('change',async e=>{
   if(e.target.id==='tips-universe'||e.target.id==='tips-holding'){
-    if(discoveryState.busy)return;discoveryState[e.target.id==='tips-universe'?'scope':'holding']=e.target.value;discoveryState.result=null;discoveryState.error=null;await renderRecommendations();
+    if(discoveryState.busy)return;discoveryState[e.target.id==='tips-universe'?'scope':'holding']=e.target.value;saveDiscoveryPreferences();discoveryState.result=null;discoveryState.error=null;await renderRecommendations();
   }
   if(e.target.id==='tips-view'){discoveryState.filter=e.target.value;discoveryState.limit=12;if(discoveryState.result)showDiscovery(discoveryState.result);}
 });

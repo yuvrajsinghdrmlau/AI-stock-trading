@@ -198,6 +198,9 @@ def test_recommendation_job_keeps_partial_results_and_reports_missing_data(appli
     assert len(tcs) == 2 and all(r['trade_plan']['decision'] == 'DATA_REQUIRED' for r in tcs)
     assert all(timeframe == '1d' for _, timeframe, _ in calls)
     assert universe.watch() == []
+    with TestClient(application) as client:
+        cached=client.get('/api/recommendations/latest',params={'mode':'Swing'}).json()
+        assert cached['cached'] and cached['basket_symbols']==result['basket_symbols']
 
 
 def test_review_latest_price_is_opt_in_and_preserves_source_errors(application, monkeypatch):

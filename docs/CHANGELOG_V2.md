@@ -1,5 +1,16 @@
 # Changes from v1 to v2
 
+## Current branch: decision toolkit
+
+- Indian-session entry timing with completed-bar, missing-slot and first-trigger expiry checks.
+- Manual ATR/range stop scenarios, configurable target R and cost-capped share sizing.
+- Cost-aware fixed-rule historical replay, recent-period reporting and seeded block resampling.
+- India-focused, on-demand RSS headlines with publisher/date, event tags and official filings link.
+- Persisted one-shot price alerts, recent-price checks and opt-in visible-page monitoring.
+- Editable untouched practice accounts; journal results cannot be rewritten by budget edits.
+- Saved scan results, original quote timestamps and remembered trade-type/universe preferences.
+- Desktop/mobile browser verification of the whole toolkit flow; no new runtime dependencies.
+
 ## Current branch: beginner desk and broad discovery (4 November 2026)
 
 - Beginner-first Delivery/Intraday/Swing/Calls & puts/Futures navigation and glossary.
