@@ -1,0 +1,6 @@
+# Pinned core dependencies; see docs/TEST_REPORT.md for tested Windows and Linux environments.
+fastapi==0.128.2
+uvicorn==0.48.0
+pydantic==2.13.5
+starlette==0.50.0
+h11==0.16.0

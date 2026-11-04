@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#10141c"><title>India Quant | Market Intelligence</title><link rel="icon" type="image/svg+xml" href="/static/icon.svg"><link rel="stylesheet" href="/static/styles.css"><link rel="stylesheet" href="/static/markets.css"><script src="/static/trade_plans.js" defer></script><script src="/static/markets.js" defer></script><script src="/static/app.js" defer></script></head>
+<body>
+<aside class="sidebar">
+ <a href="#terminal" class="brand"><span class="brand-icon">IQ<span></span></span><div>INDIA<span class="brand-light">QUANT</span><small>RESEARCH TERMINAL</small></div></a>
+ <div class="workspace"><span class="workspace-icon">Y</span><div>Founder workspace<small>Local research environment</small></div><span class="tiny-dot"></span></div>
+ <div class="nav-label">WORKSPACE</div>
+ <nav id="navigation">
+  <button data-page="market" class="nav-item"><span class="nav-icon">&#9906;</span> Market Explorer <span class="nav-number">2.1</span></button>
+  <button data-page="desk" class="nav-item"><span class="nav-icon">&#9638;</span> Daily Trade Desk</button>
+  <button data-page="studio" class="nav-item"><span class="nav-icon">&#8767;</span> Chart &amp; Filter Studio</button>
+  <div class="nav-label">RESEARCH &amp; SIMULATION</div>
+  <button data-page="terminal" class="nav-item active"><span class="nav-icon">&#9638;</span> Research terminal</button>
+  <button data-page="strategies" class="nav-item"><span class="nav-icon">&#9671;</span> Strategy library <span class="nav-number">5</span></button>
+  <button data-page="lab" class="nav-item"><span class="nav-icon">&#8982;</span> AI strategy lab</button>
+  <button data-page="paper" class="nav-item"><span class="nav-icon">&#9636;</span> Paper portfolio</button>
+  <button data-page="options" class="nav-item"><span class="nav-icon">&#8644;</span> F&amp;O payoff lab</button>
+  <div class="nav-label">INFRASTRUCTURE</div>
+  <button data-page="data" class="nav-item"><span class="nav-icon">&#9707;</span> Data &amp; connections</button>
+  <button data-page="risk" class="nav-item"><span class="nav-icon">&#9678;</span> Risk &amp; audit</button>
+ </nav>
+ <div class="sidebar-bottom"><div class="build-card"><span class="pill violet">LOCAL RESEARCH EDITION</span><h4>Review a plan. Decide yourself.</h4><p>Conditional setups and manual broker handoff. No order is placed here.</p><button data-page="data" class="button full subtle">Connect your data <span>&#8599;</span></button></div><div class="local-status"><i></i> Local service <span>v2.1.0</span></div></div>
+</aside>
+<div class="shell">
+ <header class="topbar"><div class="breadcrumbs">Workspace <span>/</span> <strong id="breadcrumb">Research terminal</strong></div><div class="top-actions"><span class="pill amber">RESEARCH / SNAPSHOTS</span><button id="kill-top" class="kill-button" title="Block new paper entries">&#9673; Paper kill switch</button><span class="avatar">YS</span></div></header>
+ <main id="content"><div class="loading"><span class="spinner"></span><h2>Opening your research workspace</h2><p>Loading local datasets and account controls.</p></div></main>
+ <footer><span><i class="tiny-dot"></i> Research &amp; simulated trading only</span><span>No guaranteed returns. Live snapshots require authorized data. <strong>Keep trading capital separate from business expenses.</strong></span></footer>
+</div>
+<div id="toast" class="toast" role="status"></div>
+</body></html>

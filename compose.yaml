@@ -1,0 +1,13 @@
+# Local development only. Host/Origin checks still reject public hostnames.
+services:
+  desk:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
+    volumes:
+      - desk_data:/app/data
+    restart: "no"
+volumes:
+  desk_data:

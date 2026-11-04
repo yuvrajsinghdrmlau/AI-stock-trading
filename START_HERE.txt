@@ -1,0 +1,25 @@
+INDIA QUANT 2.1 - LOCAL CONDITIONAL TRADE RESEARCH
+
+1. Extract to a NEW folder. Preserve the previous app and journal.
+2. Install Python 3.11 64-bit and the Python Launcher.
+3. Double-click START_WINDOWS.bat; visit http://127.0.0.1:8765.
+4. Market Explorer loads an empty or older catalogue automatically. Refresh it when stale.
+5. No Upstox key? Choose Public historical candles or import your CSV on a stock's chart.
+   Authorized broker quotes remain optional: set your own token in .env and restart.
+6. Add stocks to your watchlist. In Daily Trade Desk choose Swing or Delivery, then
+   Refresh data + find setups. Review CONDITIONAL BUY, WAIT, BLOCKED and EXPIRED results.
+7. Open Review plan / open broker to inspect entry conditions, source, expiry and levels.
+   Stop and target references must be recalculated from the actual fill. Confirm the session,
+   current price and company events on your broker. Intraday plans need authorized live data.
+8. Copy/save a research record and open your own broker to place any order manually.
+   The app does not send an order. Train/review models in AI strategy lab for measured evidence.
+
+The downloaded directory is provider-backed. Search is not limited to the 25-instrument
+watchlist. No profitable pretrained model, never-fail filter or real order execution.
+F&O is read-only chain/payoff research, not a validated options recommendation model.
+
+Synthetic SIM-* data is fictional. It is not a live quote or market-performance test.
+Do not expose this local single-user service to the public internet.
+For local distribution run: python build_local_package.py
+Before charging for recommendations or redistributing data, resolve the applicable registration
+and data rights. Read docs/COMMERCIAL_ROADMAP.md, TEST_REPORT.md and PRODUCTION_GATES.md.

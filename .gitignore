@@ -1,0 +1,9 @@
+.venv/
+.env
+data/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.sqlite3*
+diagnostic_report.txt
+dist/
