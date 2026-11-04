@@ -11,7 +11,7 @@ from .market import timestamp
 from .research import config_for
 from .strategies import CATALOG
 
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 BROKER_PLATFORMS = [
     {'name': 'Zerodha Kite', 'url': 'https://kite.zerodha.com/'},
     {'name': 'Upstox', 'url': 'https://pro.upstox.com/'},
@@ -84,6 +84,24 @@ def build_trade_plan(row, dataset, analysis, catalogue, filters, now=None):
         snapshot_end = min(t + timedelta(seconds=s) for t, s in parsed) if all(t for t, _ in parsed) else now
         qualified = snapshot_end > now
         if qualified: expiry = min(expiry, snapshot_end)
+    # Public snapshots support conditional rule research, never broker-qualified execution.
+    public_ready = False
+    public = row.get('public_snapshot') or {}
+    if not daily and not qualified and public:
+        price = public.get('last_price'); quote_time = timestamp(public.get('price_time'))
+        receipt = timestamp(public.get('received_at'))
+        source_fresh = bool(quote_time and receipt and quote_time.date() == now.date()
+                            and quote_time >= window and -5 <= (now-quote_time).total_seconds() < 60
+                            and -5 <= (now-receipt).total_seconds() < 20)
+        price_ok = (isinstance(price,(int,float)) and not isinstance(price,bool) and math.isfinite(price)
+                    and filters['min_price'] <= price <= filters['max_price'] and price > 0
+                    and abs(price-close) <= gap)
+        session_ok = now.weekday() < 5 and 555 <= now.hour*60+now.minute < 885 and dt.date() == now.date()
+        public_ready = bool(public.get('instrument_key') == inst['instrument_key'] and source_fresh
+                            and not public.get('delayed',True) and price_ok and session_ok)
+        if public_ready:
+            snapshot_end = min(quote_time+timedelta(seconds=60),receipt+timedelta(seconds=20))
+            expiry = min(expiry,snapshot_end)
     if fatal:
         decision = 'BLOCKED'
     elif now >= window_end or (not daily and (window.date() != dt.date() or window.hour * 60 + window.minute >= 885)):
@@ -91,9 +109,9 @@ def build_trade_plan(row, dataset, analysis, catalogue, filters, now=None):
         failed.insert(0, 'The next-open entry window has passed. Wait for a new completed-bar setup.')
     elif failed:
         decision = 'WAIT'
-    elif not daily and not qualified:
+    elif not daily and not qualified and not public_ready:
         decision = 'WAIT_FOR_LIVE_DATA'
-        failed.insert(0, 'Intraday plans require fresh broker quotes, normal market status and validated model evidence.')
+        failed.insert(0, 'Wait for a recent price inside the entry range during market hours. Delayed prices cannot confirm an intraday entry.')
     else:
         decision = 'CONDITIONAL_BUY'
     ready = decision == 'CONDITIONAL_BUY'
@@ -118,11 +136,13 @@ def build_trade_plan(row, dataset, analysis, catalogue, filters, now=None):
         'entry_window_ends_at': window_end.isoformat(),
         'snapshot_expires_at': snapshot_end.isoformat() if snapshot_end else None,
         'calendar_verified': False, 'live_qualified': qualified and ready,
+        'public_research_ready': public_ready and ready,
         'basis': 'VALIDATED_MODEL_AND_RULES' if model.get('status') == 'RESEARCH_ESTIMATE' else 'RULES_ONLY_UNVALIDATED',
         'probability': model.get('probability') if model.get('status') == 'RESEARCH_ESTIMATE' else None,
         'reasons': failed, 'checks': [{'name': name, 'pass': bool(passed)} for name, passed, _ in checks],
         'execution': 'MANUAL_ON_YOUR_BROKER', 'order_placed': False,
         'limitations': ['Confirm the actual trading session, stock identity, current price, spread and company events on your broker before any order.',
+                        'Public snapshots do not verify bid/ask spread, circuit limits or exchange status. A recent timestamp is not a guaranteed real-time feed.',
                         'Dates assume ordinary weekdays; exchange holidays and special sessions are not verified. Expired plans are not rolled forward.',
                         'Risk checks use the local paper account. Your actual broker balance, positions and limits are not connected; check them and the permitted price tick size yourself.',
                         'Reference levels are hypothetical. Gaps, slippage, taxes and costs affect outcomes. A rules match is not a profit probability.'],

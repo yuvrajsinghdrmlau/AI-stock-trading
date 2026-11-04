@@ -129,37 +129,44 @@ class Desk:
         self.universe.link(key,timeframe,ident)
         return {'dataset_id':ident,'bars':len(bars),'last_bar':bars[-1]['t'],'warnings':warnings}
 
-    def evaluate(self, inst, strategy, cfg, account, catalogue, quote=None, market=None):
+    def evaluate(self, inst, strategy, cfg, account, catalogue, quote=None, market=None, public_snapshot=None):
         spec=CATALOG[strategy]; data=self.universe.history(inst['instrument_key'],spec['timeframe'])
         if not data:
             return {'instrument':inst,'strategy':strategy,'strategy_name':spec['name'],'mode':spec['mode'],
                 'status':'DATA_REQUIRED','reasons':['Load '+spec['timeframe']+' history for this stock.'],
-                'probability':None,'quote':quote,'trade_plan':{'decision':'DATA_REQUIRED','entry':None}}
+                'probability':None,'quote':quote,'public_snapshot':public_snapshot,
+                'trade_plan':{'decision':'DATA_REQUIRED','entry':None}}
         a={**analyse(data['bars'],data['timeframe'],strategy),'strategy':strategy}
         model=self.models.infer(inst['instrument_key'],strategy,data)
         row=evaluate_candidate(inst,data,a,quote,market,model,account,catalogue,cfg)
+        row['public_snapshot']=public_snapshot
         row['trade_plan']=build_trade_plan(row,data,a,catalogue,cfg)
         if not self.broker.configured and row['trade_plan']['decision']=='CONDITIONAL_BUY':
-            row['status']='HISTORICAL_SETUP'
+            row['status']='PUBLIC_RESEARCH_SETUP' if data['timeframe']=='15m' else 'HISTORICAL_SETUP'
         row['trade_plan']['copy_text']=plan_text(row)
         self._audit(row)
         return row
 
-    def review(self,key,strategy,filters=None):
+    def review(self,key,strategy,filters=None,latest_price=False):
         if strategy not in CATALOG: raise ValueError('Unknown strategy.')
-        inst=self.universe.get(key); quote=None; market=None; errors=[]
+        inst=self.universe.get(key); quote=None; market=None; errors=[]; public_snapshot=None
         if self.broker.configured:
             try: quote=self.broker.quotes([key]).get(key)
             except ValueError as exc: errors.append(str(exc))
             try: market=self.broker.exchange_status(inst['exchange'])
             except ValueError as exc: errors.append(str(exc))
-        row=self.evaluate(inst,strategy,filters_config(filters),self.store.account(),self.universe.status(),quote,market)
+        elif latest_price:
+            from .public_quotes import public_quote
+            try: public_snapshot=public_quote(inst)
+            except ValueError as exc: errors.append(str(exc))
+        row=self.evaluate(inst,strategy,filters_config(filters),self.store.account(),self.universe.status(),quote,market,public_snapshot)
         row['data_errors']=errors
         return row
 
-    def board(self,mode,filters=None):
+    def board(self,mode,filters=None,instruments=None,public_snapshots=None):
         if mode not in MODE_STRATEGIES: raise ValueError('Use Swing, Intraday or Delivery. F&O has a separate read-only chain.')
-        cfg=filters_config(filters); watched=self.universe.watch(); keys=[r['instrument_key'] for r in watched if not r.get('unavailable')]
+        cfg=filters_config(filters); watched=self.universe.watch() if instruments is None else instruments
+        keys=[r['instrument_key'] for r in watched if not r.get('unavailable')]
         quotes={}; statuses={}; errors=[]
         if self.broker.configured and keys:
             try: quotes=self.broker.quotes(keys)
@@ -174,7 +181,8 @@ class Desk:
                 rows.append({'instrument':inst,'status':'UNAVAILABLE','reasons':['Instrument not in refreshed catalogue.'],'probability':None})
                 continue
             for strategy in MODE_STRATEGIES[mode]:
-                rows.append(self.evaluate(inst,strategy,cfg,account,catalogue,quotes.get(inst['instrument_key']),statuses.get(inst['exchange'])))
+                rows.append(self.evaluate(inst,strategy,cfg,account,catalogue,quotes.get(inst['instrument_key']),statuses.get(inst['exchange']),
+                                          (public_snapshots or {}).get(inst['instrument_key'])))
         rows.sort(key=lambda r:(r.get('trade_plan',{}).get('decision')=='CONDITIONAL_BUY',
             r.get('trade_plan',{}).get('live_qualified',False),r.get('setup_score') or 0),reverse=True)
         total=len(rows)

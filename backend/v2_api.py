@@ -11,6 +11,7 @@ from .desk import MODE_STRATEGIES, DEFAULT_FILTERS, filters_config
 from .strategies import CATALOG, analyse
 from .data import IST, parse_time, csv_bars
 from .trade_plans import BROKER_PLATFORMS, DATA_OPTIONS
+from .recommendations import discovery_basket
 
 class WatchChange(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -39,6 +40,11 @@ class PlanReview(BaseModel):
     instrument_key:str=Field(min_length=5,max_length=110)
     strategy:str
     filters:dict=Field(default_factory=dict)
+    latest_price:bool=False
+
+class RecommendationScan(BoardRequest):
+    refresh:bool=False
+    source:str='auto'
 
 
 def register_v2(app,store,universe,broker,models,desk):
@@ -162,10 +168,48 @@ def register_v2(app,store,universe,broker,models,desk):
     def scan(body:BoardRequest): return desk.board(body.mode,body.filters)
 
     @app.post('/api/desk/review')
-    def review(body:PlanReview): return desk.review(body.instrument_key,body.strategy,body.filters)
+    def review(body:PlanReview): return desk.review(body.instrument_key,body.strategy,body.filters,body.latest_price)
 
     @app.get('/api/desk/log')
     def log(): return desk.signal_log()
+
+    @app.post('/api/recommendations/scan')
+    def recommendations(body:RecommendationScan):
+        if body.mode not in MODE_STRATEGIES: raise ValueError('Use Intraday, Swing or Delivery.')
+        if body.source not in ('auto','public','broker'): raise ValueError('Invalid history source.')
+        cfg=filters_config(body.filters)
+        def work(update):
+            if universe.status().get('stale',True):
+                update(1,'Refreshing stock catalogue before discovery')
+                universe.sync()
+            instruments,missing=discovery_basket(universe)
+            if not instruments: raise ValueError('No eligible starter-basket listings found. Refresh the catalogue and retry.')
+            errors=[]; loaded=0; timeframe='15m' if body.mode=='Intraday' else '1d'
+            for i,inst in enumerate(instruments):
+                update(5+int(i/len(instruments)*80),'Loading and screening '+inst['symbol'])
+                if body.refresh or not universe.history(inst['instrument_key'],timeframe):
+                    try:
+                        desk.refresh_history(inst['instrument_key'],timeframe,body.source)
+                        loaded+=1
+                    except ValueError as exc: errors.append(inst['symbol']+': '+str(exc))
+                    if i+1<len(instruments): time.sleep(1)
+            snapshots={}
+            if not broker.configured:
+                from .public_quotes import public_quote
+                update(86,'Checking the latest available stock prices')
+                # Bounded parallel read-only requests keep quote age useful across the basket.
+                with ThreadPoolExecutor(max_workers=3,thread_name_prefix='public-price') as readers:
+                    futures=[(inst,readers.submit(public_quote,inst)) for inst in instruments]
+                    for inst,future in futures:
+                        try: snapshots[inst['instrument_key']]=future.result()
+                        except ValueError as exc: errors.append(inst['symbol']+' price: '+str(exc))
+            update(95,'Ranking stock setups')
+            result=desk.board(body.mode,cfg,instruments=instruments,public_snapshots=snapshots)
+            result.update(basket_symbols=[i['symbol'] for i in instruments],missing_symbols=missing,
+                          refreshed=loaded,scope='Starter basket of up to 25 NSE equities; not a whole-market or official index scan.')
+            result['errors']+=errors
+            return result
+        return launch(work)
 
     @app.get('/api/models')
     def model_list(): return models.list()

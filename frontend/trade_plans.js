@@ -47,6 +47,7 @@ function showTradeReview(row){
   const p=row.trade_plan||{},i=row.instrument;
   const dialog=document.createElement('dialog');dialog.id='trade-review';dialog.className='trade-review';
   dialog.dataset.key=i.instrument_key;dialog.dataset.planStrategy=row.strategy;
+  dialog.dataset.latestPrice=row.request_latest_price?'true':'false';
   const brokers=marketState.brokers||[];
   dialog.innerHTML=`<div class="panel-head"><div><h3>${h(i.exchange+' / '+i.symbol)}</h3><small>${h(row.strategy_name)} · ISIN ${h(i.isin||'unavailable')}</small></div><button class="icon-button" data-plan-close aria-label="Close plan">×</button></div>
     <div class="panel-body">${tradePlanView(row)}<ul class="evidence-list">${(p.checks||[]).map(c=>`<li>${passIcon(c.pass)}${h(c.name)}</li>`).join('')}</ul>
@@ -73,7 +74,9 @@ document.addEventListener('click',async e=>{
     const dialog=document.getElementById('trade-review');
     const key=review?review.dataset.reviewKey:dialog.dataset.key;
     const strategy=review?review.dataset.reviewStrategy:dialog.dataset.planStrategy;
-    const row=await api('/desk/review',{instrument_key:key,strategy,filters:marketState.filters});
+    const latest_price=review?review.dataset.reviewLatest==='true':dialog.dataset.latestPrice==='true';
+    const row=await api('/desk/review',{instrument_key:key,strategy,filters:marketState.filters,latest_price});
+    row.request_latest_price=latest_price;
     if(review){showTradeReview(row);return;}
     const p=row.trade_plan||{};
     if(!p.copy_text)throw Error('Load this stock’s completed candles first.');
