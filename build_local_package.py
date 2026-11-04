@@ -30,7 +30,9 @@ def build():
             name = path.relative_to(ROOT).as_posix(); data = path.read_bytes()
             archive.writestr('india_quant_platform/' + name, data)
             hashes.append(hashlib.sha256(data).hexdigest() + '  ' + name)
-        archive.writestr('india_quant_platform/SHA256SUMS.txt', '\n'.join(hashes) + '\n')
+        manifest = '\n'.join(hashes) + '\n'
+        archive.writestr('india_quant_platform/SHA256SUMS.txt', manifest)
+    (ROOT / 'SHA256SUMS.txt').write_text(manifest, encoding='utf-8')
     print(f'Created {target} ({len(paths)} files plus checksums)')
     print('No .env, data directory, virtual environment, customer records or fitted model files included.')
     return target

@@ -16,6 +16,12 @@ from .data import IST, validate_bars
 
 
 def yahoo_symbol(instrument):
+    index_symbols = {'Nifty 50': '^NSEI', 'NIFTY': '^NSEI',
+                     'Nifty Bank': '^NSEBANK', 'BANKNIFTY': '^NSEBANK'}
+    if instrument.get('kind') == 'INDEX' and instrument.get('exchange') == 'NSE':
+        ticker = index_symbols.get(instrument.get('symbol'))
+        if ticker: return ticker
+        raise ValueError('This index has no verified public ticker mapping. Use broker history.')
     if instrument.get('kind') != 'CASH' or not instrument.get('simple_equity'):
         raise ValueError('Public history supports regular NSE/BSE cash equities only.')
     symbol = str(instrument.get('symbol', ''))

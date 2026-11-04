@@ -50,8 +50,10 @@ function showTradeReview(row){
   dialog.dataset.latestPrice=row.request_latest_price?'true':'false';
   const brokers=marketState.brokers||[];
   dialog.innerHTML=`<div class="panel-head"><div><h3>${h(i.exchange+' / '+i.symbol)}</h3><small>${h(row.strategy_name)} · ISIN ${h(i.isin||'unavailable')}</small></div><button class="icon-button" data-plan-close aria-label="Close plan">×</button></div>
-    <div class="panel-body">${tradePlanView(row)}<ul class="evidence-list">${(p.checks||[]).map(c=>`<li>${passIcon(c.pass)}${h(c.name)}</li>`).join('')}</ul>
-    ${(p.limitations||[]).map(t=>`<p class="small muted">${h(t)}</p>`).join('')}
+    <div class="panel-body">${tradePlanView(row)}
+    ${state.page==='recommendations'?`<div class="tips-next-steps"><h3>How to use this plan</h3><ol><li>Check the stock name, current price and entry window.</li><li>${p.entry?`Your practice account allows ${row.plan?.quantity||0} shares, with ${money(row.plan?.planned_loss_with_estimated_costs||0,2)} planned loss at the stop.`:'Wait for a new matching setup. No entry is active on this card.'}</li><li>On your broker, choose Delivery for a longer hold, or Intraday for a same-day trade.</li><li>Enter your own quantity and place separate stop and target orders on the broker.</li></ol></div>`:''}
+    <details class="tip-evidence"><summary>Calculation details and checks</summary><ul class="evidence-list">${(p.checks||[]).map(c=>`<li>${passIcon(c.pass)}${h(c.name)}</li>`).join('')}</ul>
+    ${(p.limitations||[]).map(t=>`<p class="small muted">${h(t)}</p>`).join('')}</details>
     ${(row.data_errors||[]).map(t=>`<p class="note-block">${h(t)}</p>`).join('')}
     <div class="row-flex"><button class="button primary" data-plan-copy ${p.entry?'':'disabled'}>Recheck &amp; copy plan</button><button class="button subtle" data-plan-download>Save research record</button>
     ${p.official_market_url?`<a class="button subtle" href="${h(p.official_market_url)}" target="_blank" rel="noopener noreferrer">Check official market site ↗</a>`:''}</div>

@@ -9,11 +9,48 @@ model is bundled. More model complexity is not proof of a trading advantage.
 
 ## Version 2.1: local product workflow
 
+### Current branch: beginner trade ideas
+
+The app now opens **Your trade ideas**. Pick **Delivery**, **Intraday**, **Swing**,
+**Calls & puts**, or **Futures**. The beginner guide explains entries, stops, targets,
+premium, lots and the manual broker steps. Cards include a small historical graph;
+**See chart** opens the completed-candle chart. Delivery is the default for a new user.
+
+The old 25-stock starter scan is replaced by **Nifty 500** (default), Nifty 200/100/50,
+**All regular NSE stocks**, and **All NSE F&O stocks & indices**. Index constituents
+are downloaded from official NSE/NSE Indices CSVs and matched by symbol **and ISIN**.
+The scanner shows excluded/unavailable members, actual data coverage, progress and
+partial results every ten stocks. You can stop after a batch. Candle caching avoids
+unnecessary downloads; the separate live watchlist still has its 25-instrument limit.
+If an index list cannot be downloaded or recovered from a recent cache, the app
+explicitly switches to all eligible NSE stocks rather than guessing membership.
+
+F&O ideas cover bullish **buy calls**, bearish **buy puts**, and **buy/sell futures**,
+including index underlyings present in the instrument catalogue. Contract identities,
+strikes, expiries and lot sizes come from the current provider master. The selector
+avoids expiries less than seven days away. Nifty and Bank Nifty have public history
+mappings; other indices may require broker history.
+
+Without a broker API, F&O cards can show the underlying direction, trigger, stop,
+target and a listed contract to inspect. These are **underlying levels, not option
+premium or futures execution prices**. For current-session premium/futures plans,
+connect the existing authorized broker adapter. It checks the underlying trigger,
+contract quote time, spread, volume and local account limits before returning one-lot
+entry/stop/target levels. Option premium stops use a fixed 25% rule and 50% target;
+this is not an options-pricing forecast. Full premium loss and futures margin checks
+remain visible. Next-session F&O mode gives trend ideas to recheck during the session.
+The current implementation does not generate option-selling, spreads or commodity trades.
+
+Live-source verification on 4 November 2026 resolved 495 eligible cash equities from
+500 official constituents and 224 F&O underlyings. Counts change with listings,
+eligibility and catalogue updates; they are not hard-coded scan limits.
+
 Daily Trade Desk now ranks **CONDITIONAL BUY**, **WAIT**, **BLOCKED** and **EXPIRED** research plans.
 Each eligible plan shows its next-open entry range, reference stop/target, formulas to recalculate
 levels from the actual fill, source, deadline and rule/model evidence. Rules-only daily plans can
 work without a personal broker API; they do not carry a validated profit probability. Intraday
-plans still require fresh broker quotes, normal-market status and validated model evidence.
+plans can use recent public snapshots for rules-only conditional research; only the
+broker-qualified path verifies broker quotes, spread, market status and model evidence.
 
 **Review plan / open broker** rechecks the setup and offers a dated research record to copy or save.
 Broker buttons open Zerodha Kite, Upstox or Dhan without sending an order or broker credentials.

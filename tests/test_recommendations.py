@@ -2,6 +2,7 @@
 import copy
 import os
 import time
+import threading
 from datetime import datetime, timedelta
 
 import pytest
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 from backend.data import IST, demo_bars
 from backend.desk import evaluate_candidate, filters_config
 from backend.main import create_app
-from backend.recommendations import discovery_basket
+from backend.recommendations import select_universe
 from backend.trade_plans import build_trade_plan
 
 NOW = datetime(2026, 11, 4, 10, 30, 20, tzinfo=IST)
@@ -126,14 +127,16 @@ def application(tmp_path, monkeypatch):
     return create_app(tmp_path, seed_demo=False, testing=True)
 
 
-def test_discovery_resolves_exact_eligible_nse_listings_without_watch_changes(application):
+def test_discovery_resolves_exact_eligible_nse_listings_without_watch_changes(application, monkeypatch):
     rows = [master('RELIANCE'), master('RELIANCE-ALT', 2), master('TCS', 3, series='BL'),
             master('INFY', 4), master('BEL', 5, exchange='BSE', series='A')]
     universe = application.state.universe
     universe.replace(rows, [rows[3]])
     universe.set_watch(rows[4]['instrument_key'])
     before = copy.deepcopy(universe.watch())
-    selected, missing = discovery_basket(universe)
+    monkeypatch.setattr('backend.recommendations.download_members', lambda _: ([
+        {'symbol':r['trading_symbol'],'isin':r['isin']} for r in [rows[0],*rows[2:]]], 'fixture-index'))
+    selected, missing, _ = select_universe(universe)
     assert [r['symbol'] for r in selected] == ['RELIANCE']
     assert {'TCS', 'INFY', 'BEL'} <= set(missing)
     assert universe.watch() == before
@@ -161,9 +164,9 @@ def test_recommendation_api_auth_and_invalid_inputs(application):
 def test_recommendation_job_keeps_partial_results_and_reports_missing_data(application, monkeypatch):
     universe = application.state.universe
     rows = [master('RELIANCE'), master('TCS', 2)]
-    universe.replace(rows, [])
+    universe.replace(rows+[master('BSE-ONLY', 90, exchange='BSE', series='A')], [])
     instruments = [universe.get(r['instrument_key']) for r in rows]
-    monkeypatch.setattr('backend.v2_api.discovery_basket', lambda _: (instruments, ['MISSING']))
+    monkeypatch.setattr('backend.v2_api.select_universe', lambda *args: (instruments, ['MISSING'], {'label':'Fixture universe','warnings':[]}))
     calls = []
 
     def refresh(key, timeframe, source):
@@ -198,7 +201,7 @@ def test_recommendation_job_keeps_partial_results_and_reports_missing_data(appli
 
 
 def test_review_latest_price_is_opt_in_and_preserves_source_errors(application, monkeypatch):
-    application.state.universe.replace([master('RELIANCE')], [])
+    application.state.universe.replace([master('RELIANCE'),master('BSE-ONLY', 90, exchange='BSE', series='A')], [])
     calls = []
 
     def quote(inst):
@@ -215,3 +218,37 @@ def test_review_latest_price_is_opt_in_and_preserves_source_errors(application, 
     assert response.status_code == 200 and calls == [KEY]
     assert response.json()['data_errors'] == ['Fixture quote unavailable']
     assert response.json()['trade_plan']['entry'] is None
+
+
+def test_large_scan_publishes_batches_and_stops_with_partial_coverage(application, monkeypatch):
+    universe=application.state.universe
+    rows=[master('FIX'+str(i),i+1) for i in range(30)]
+    universe.replace(rows+[master('BSE-ONLY',90,exchange='BSE')],[])
+    instruments=[universe.get(r['instrument_key']) for r in rows]
+    monkeypatch.setattr('backend.v2_api.select_universe',lambda *args:(instruments,[],{'label':'Fixture','warnings':[]}))
+    dataset=application.state.store.add_dataset('NSE:FIX0','1d','FICTIONAL TEST INPUT',False,demo_bars(1,'1d',120))
+    entered=threading.Event(); release=threading.Event()
+    def refresh(key,tf,source):
+        if key==instruments[10]['instrument_key']:
+            entered.set()
+            assert release.wait(5)
+        universe.link(key,tf,dataset)
+        return {'dataset_id':dataset}
+    monkeypatch.setattr(application.state.desk,'refresh_history',refresh)
+    monkeypatch.setattr(application.state.desk,'board',lambda mode,cfg,**kw:{'rows':[
+        {'instrument':i,'status':'WAIT'} for i in kw['instruments']], 'errors':[]})
+    monkeypatch.setattr('backend.public_quotes.public_quote',lambda i:public_snapshot())
+    with TestClient(application) as client:
+        headers={'X-Desk-Token':application.state.token}
+        ident=client.post('/api/recommendations/scan',json={'mode':'Delivery','scope':'all_nse'},headers=headers).json()['job_id']
+        try:
+            assert entered.wait(5)
+            partial=client.get('/api/market/jobs/'+ident).json()
+            assert partial['status']=='running' and partial['result']['processed']==10
+            assert partial['result']['total']==30 and not partial['result']['complete']
+            assert 'result' not in client.get('/api/market/jobs/'+ident+'?after_processed=10').json()
+            assert client.post('/api/market/jobs/'+ident+'/cancel',json={},headers=headers).status_code==200
+        finally: release.set()
+        result=poll_job(client,ident)['result']
+        assert result['cancelled'] and result['processed']==20 and not result['complete']
+        assert universe.watch()==[]

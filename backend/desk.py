@@ -139,6 +139,7 @@ class Desk:
         a={**analyse(data['bars'],data['timeframe'],strategy),'strategy':strategy}
         model=self.models.infer(inst['instrument_key'],strategy,data)
         row=evaluate_candidate(inst,data,a,quote,market,model,account,catalogue,cfg)
+        row['spark']=[bar['c'] for bar in data['bars'][-30:]]
         row['public_snapshot']=public_snapshot
         row['trade_plan']=build_trade_plan(row,data,a,catalogue,cfg)
         if not self.broker.configured and row['trade_plan']['decision']=='CONDITIONAL_BUY':
@@ -169,12 +170,13 @@ class Desk:
         keys=[r['instrument_key'] for r in watched if not r.get('unavailable')]
         quotes={}; statuses={}; errors=[]
         if self.broker.configured and keys:
-            try: quotes=self.broker.quotes(keys)
-            except ValueError as exc: errors.append(str(exc))
+            for start in range(0,len(keys),25):
+                try: quotes.update(self.broker.quotes(keys[start:start+25]))
+                except ValueError as exc: errors.append(str(exc))
             for ex in {r.get('exchange') for r in watched if r.get('exchange')}:
                 try: statuses[ex]=self.broker.exchange_status(ex)
                 except ValueError as exc: errors.append(str(exc))
-        elif keys: errors.append('No broker token: daily conditional plans use completed history only. Live quotes, verified market status and live-qualified intraday plans are unavailable.')
+        elif keys: errors.append('No broker token: prices use public snapshots where available. Broker depth and exchange status are unverified.')
         account=self.store.account(); catalogue=self.universe.status(); rows=[]
         for inst in watched:
             if inst.get('unavailable'):

@@ -2,6 +2,34 @@
 
 **Windows verification: 4 November 2026. Software tests are not market-performance evidence.**
 
+## Current branch: beginner desk and broad scan
+
+**246 automated tests passed**. Added coverage exercises scans above 25 instruments,
+symbol/ISIN membership matching, official-source failure and catalogue fallback,
+partial results, duplicate-payload suppression, stop-after-batch behavior and history
+caching. F&O fixtures test calls, puts, buy/sell futures, listed expiry/lot identities,
+unusable/stale/wrong-identity quotes, spread/volume checks, account limits and the
+separation of underlying levels from contract prices. No live broker token was used.
+
+The Edge browser smoke check uses a temporary database and explicitly fictional
+listings. It verifies a 150-stock scan, paging, search, beginner guide, call/futures
+review, broker links and a 390px mobile layout without horizontal overflow or JS errors.
+The source-workspace runner is `artifacts/browser_beginner_tips.py`.
+
+Read-only upstream verification downloaded 500 official Nifty 500 members; 495 matched
+eligible cash listings. BAGMANE, BIRET, EMBASSY, HFCL and STLTECH were reported as
+unavailable/ineligible, not silently fabricated or counted as evaluated. The provider
+master supplied 36,486 normalized NSE derivative contracts and 224 underlyings.
+Public daily/15-minute candles and timestamped snapshots worked for RELIANCE, TCS,
+NIFTY and BANKNIFTY. After-hours prices were correctly marked stale. Membership and
+counts are a dated observation, not a completeness or feed-latency guarantee.
+
+Authenticated option/futures quotations and orders were not tested against a real
+account. Premium-plan behavior is verified with controlled quote fixtures. The new
+direction rules have not been validated for profitability.
+
+## Prior tested v2.1 baseline
+
 Command: `.venv\Scripts\python.exe -m pytest -q -o addopts=`
 
 **178 passed in 8.21 seconds** on Windows with Python 3.11.9. This includes the prior regression

@@ -14,11 +14,32 @@ from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from .data import IST
+from .market import timestamp, finite
 
 MASTER_URL = 'https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz'
 SUSPENDED_URL = 'https://assets.upstox.com/market-quote/instruments/exchange/suspended-instrument.json.gz'
 SEGMENTS = {'NSE_EQ', 'BSE_EQ', 'NSE_INDEX', 'BSE_INDEX'}
-NORMALIZATION_VERSION = 2
+NORMALIZATION_VERSION = 3
+
+
+def normalize_contracts(rows, suspended=None):
+    """Keep derivative identities separate from searchable cash listings."""
+    blocked = {r.get('instrument_key') for r in (suspended or []) if isinstance(r, dict)}
+    result = {}
+    for r in rows:
+        if not isinstance(r, dict) or r.get('segment') != 'NSE_FO': continue
+        kind = r.get('instrument_type'); key = str(r.get('instrument_key', ''))
+        underlying = str(r.get('underlying_key', '')); expiry = timestamp(r.get('expiry'))
+        lot = finite(r.get('lot_size')); strike = finite(r.get('strike_price'))
+        if (kind not in ('CE', 'PE', 'FUT') or not key.startswith('NSE_FO|') or len(key) > 110
+                or not underlying.startswith(('NSE_EQ|', 'NSE_INDEX|')) or not expiry
+                or not lot or lot < 1 or lot != int(lot) or key in blocked
+                or (kind != 'FUT' and (not strike or strike <= 0))): continue
+        result[key] = {'instrument_key': key, 'underlying_key': underlying,
+                       'symbol': str(r.get('trading_symbol', '')), 'instrument_type': kind,
+                       'expiry': expiry.date().isoformat(), 'lot_size': int(lot),
+                       'strike': strike if kind != 'FUT' else None}
+    return list(result.values())
 
 def download_master(url: str) -> tuple[list, dict]:
     if url not in (MASTER_URL, SUSPENDED_URL):
@@ -108,10 +129,14 @@ class Universe:
                 CREATE TABLE IF NOT EXISTS market_history(instrument_key TEXT, timeframe TEXT,
                     dataset_id TEXT, updated TEXT, PRIMARY KEY(instrument_key,timeframe));
                 CREATE TABLE IF NOT EXISTS signal_audit(id TEXT PRIMARY KEY, created TEXT, body TEXT);
+                CREATE TABLE IF NOT EXISTS derivative_contracts(
+                    instrument_key TEXT PRIMARY KEY, underlying_key TEXT, expiry TEXT, body TEXT);
+                CREATE INDEX IF NOT EXISTS derivative_underlying ON derivative_contracts(underlying_key,expiry);
             ''')
 
     def replace(self, rows, suspended=None, source_meta=None):
         cleaned = normalize_master(rows, suspended)
+        contracts = normalize_contracts(rows, suspended)
         if not cleaned or not {'NSE', 'BSE'}.issubset({r['exchange'] for r in cleaned}):
             raise ValueError('Catalogue must contain both NSE and BSE records; old cache retained.')
         stamp = self.store.now()
@@ -121,6 +146,10 @@ class Universe:
                 'total': len(cleaned), 'coverage': 'One preferred listing per provider key: active regular equity first, plus suspended-only keys and indices. Suspension is matched by series/token. Not an exchange-wide completeness certification.'}
         with self.store.db() as db:
             db.execute('DELETE FROM instruments')
+            db.execute('DELETE FROM derivative_contracts')
+            db.executemany('INSERT INTO derivative_contracts VALUES(?,?,?,?)',
+                           [(r['instrument_key'], r['underlying_key'], r['expiry'], json.dumps(r)) for r in contracts])
+            meta['derivative_contracts'] = len(contracts)
             db.executemany('INSERT INTO instruments VALUES(?,?,?,?,?,?,?)',
                 [(r['instrument_key'], r['exchange'], r['symbol'], r['name'], r['isin'], r['kind'], json.dumps(r)) for r in cleaned])
             db.execute('INSERT OR REPLACE INTO catalogue_meta VALUES(?,?)', ('current', json.dumps(meta)))
@@ -151,6 +180,24 @@ class Universe:
         if not r:
             raise ValueError('Instrument is absent from the current catalogue. Refresh it; do not guess a broker identifier.')
         return json.loads(r['body'])
+
+    def eligible(self):
+        with self.store.db() as db:
+            rows = db.execute("SELECT body FROM instruments WHERE exchange='NSE' AND kind='CASH' ORDER BY symbol").fetchall()
+        return [r for row in rows if (r := json.loads(row['body'])).get('simple_equity') and not r.get('suspended')]
+
+    def contracts(self, key):
+        today = datetime.now(IST).date().isoformat()
+        with self.store.db() as db:
+            rows = db.execute('SELECT body FROM derivative_contracts WHERE underlying_key=? AND expiry>=? ORDER BY expiry', (key, today)).fetchall()
+        return [json.loads(r['body']) for r in rows]
+
+    def fo_underlyings(self):
+        today = datetime.now(IST).date().isoformat()
+        with self.store.db() as db:
+            rows = db.execute('SELECT DISTINCT i.body FROM instruments i JOIN derivative_contracts d ON i.instrument_key=d.underlying_key WHERE d.expiry>=?', (today,)).fetchall()
+        return [r for row in rows if not (r := json.loads(row['body'])).get('suspended')
+                and (r.get('simple_equity') or r['kind'] == 'INDEX')]
 
     def search(self, query='', exchange='ALL', kind='CASH', offset=0, limit=50):
         if exchange not in ('ALL', 'NSE', 'BSE') or kind not in ('ALL', 'CASH', 'INDEX'):

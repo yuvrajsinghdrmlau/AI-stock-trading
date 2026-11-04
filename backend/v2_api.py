@@ -11,7 +11,8 @@ from .desk import MODE_STRATEGIES, DEFAULT_FILTERS, filters_config
 from .strategies import CATALOG, analyse
 from .data import IST, parse_time, csv_bars
 from .trade_plans import BROKER_PLATFORMS, DATA_OPTIONS
-from .recommendations import discovery_basket
+from .recommendations import select_universe, history_due, SCOPES
+from .derivative_ideas import build_derivative_idea
 
 class WatchChange(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -45,6 +46,14 @@ class PlanReview(BaseModel):
 class RecommendationScan(BoardRequest):
     refresh:bool=False
     source:str='auto'
+    scope:str='nifty500'
+    holding:str='Intraday'
+
+class DerivativeReview(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    instrument_key:str=Field(min_length=5,max_length=110)
+    product:str='Options'
+    holding:str='Intraday'
 
 
 def register_v2(app,store,universe,broker,models,desk):
@@ -59,8 +68,13 @@ def register_v2(app,store,universe,broker,models,desk):
                 for key in list(jobs)[:30]:
                     if jobs[key]['status']!='running': del jobs[key]
             jid=uuid.uuid4().hex[:16];jobs[jid]={'id':jid,'status':'running','progress':0,'message':'Starting data request'}
-        def update(progress,message):
-            with lock: jobs[jid].update(progress=progress,message=message)
+        def update(progress,message,partial=None):
+            with lock:
+                jobs[jid].update(progress=progress,message=message)
+                if partial is not None: jobs[jid]['result']=partial
+        def cancelled():
+            with lock: return jobs[jid].get('cancel_requested',False)
+        update.cancelled=cancelled
         def work():
             try:
                 result=task(update)
@@ -159,10 +173,20 @@ def register_v2(app,store,universe,broker,models,desk):
         return launch(work)
 
     @app.get('/api/market/jobs/{ident}')
-    def job(ident:str):
+    def job(ident:str,after_processed:int=-1):
         with lock:
             if ident not in jobs: raise ValueError('Data job not found. Restarted servers do not resume unfinished refreshes.')
-            return dict(jobs[ident])
+            result=dict(jobs[ident])
+            if result['status']=='running' and result.get('result',{}).get('processed')==after_processed:
+                result.pop('result',None)
+            return result
+
+    @app.post('/api/market/jobs/{ident}/cancel')
+    def cancel_job(ident:str):
+        with lock:
+            if ident not in jobs: raise ValueError('Data job not found.')
+            jobs[ident]['cancel_requested']=True
+        return {'requested':True,'message':'Stopping after the current batch.'}
 
     @app.post('/api/desk/scan')
     def scan(body:BoardRequest): return desk.board(body.mode,body.filters)
@@ -175,41 +199,109 @@ def register_v2(app,store,universe,broker,models,desk):
 
     @app.post('/api/recommendations/scan')
     def recommendations(body:RecommendationScan):
-        if body.mode not in MODE_STRATEGIES: raise ValueError('Use Intraday, Swing or Delivery.')
+        if body.mode not in (*MODE_STRATEGIES,'Options','Futures'): raise ValueError('Use Intraday, Swing, Delivery, Options or Futures.')
+        if body.scope not in SCOPES: raise ValueError('Unknown stock universe.')
+        if body.holding not in ('Intraday','Swing'): raise ValueError('Use Intraday or Swing holding for F&O.')
         if body.source not in ('auto','public','broker'): raise ValueError('Invalid history source.')
         cfg=filters_config(body.filters)
         def work(update):
             if universe.status().get('stale',True):
                 update(1,'Refreshing stock catalogue before discovery')
                 universe.sync()
-            instruments,missing=discovery_basket(universe)
-            if not instruments: raise ValueError('No eligible starter-basket listings found. Refresh the catalogue and retry.')
-            errors=[]; loaded=0; timeframe='15m' if body.mode=='Intraday' else '1d'
-            for i,inst in enumerate(instruments):
-                update(5+int(i/len(instruments)*80),'Loading and screening '+inst['symbol'])
-                if body.refresh or not universe.history(inst['instrument_key'],timeframe):
-                    try:
-                        desk.refresh_history(inst['instrument_key'],timeframe,body.source)
-                        loaded+=1
-                    except ValueError as exc: errors.append(inst['symbol']+': '+str(exc))
-                    if i+1<len(instruments): time.sleep(1)
-            snapshots={}
-            if not broker.configured:
-                from .public_quotes import public_quote
-                update(86,'Checking the latest available stock prices')
-                # Bounded parallel read-only requests keep quote age useful across the basket.
-                with ThreadPoolExecutor(max_workers=3,thread_name_prefix='public-price') as readers:
-                    futures=[(inst,readers.submit(public_quote,inst)) for inst in instruments]
-                    for inst,future in futures:
-                        try: snapshots[inst['instrument_key']]=future.result()
-                        except ValueError as exc: errors.append(inst['symbol']+' price: '+str(exc))
-            update(95,'Ranking stock setups')
-            result=desk.board(body.mode,cfg,instruments=instruments,public_snapshots=snapshots)
-            result.update(basket_symbols=[i['symbol'] for i in instruments],missing_symbols=missing,
-                          refreshed=loaded,scope='Starter basket of up to 25 NSE equities; not a whole-market or official index scan.')
-            result['errors']+=errors
+            derivatives=body.mode in ('Options','Futures')
+            instruments,missing,coverage=select_universe(universe,body.scope,derivatives)
+            if not instruments: raise ValueError('No eligible listings found in this universe. Refresh the catalogue or choose All NSE stocks.')
+            errors=list(coverage['warnings']); loaded=0; rows=[]; processed=0; with_history=0
+            timeframe='15m' if body.mode=='Intraday' or (derivatives and body.holding=='Intraday') else '1d'
+            paused=threading.Event()
+            def history_one(inst):
+                if paused.is_set(): return False, 'Provider rate limit reached; use cached data or retry later.'
+                existing=universe.history(inst['instrument_key'],timeframe)
+                if not body.refresh and not history_due(existing,timeframe): return False,None
+                try:
+                    desk.refresh_history(inst['instrument_key'],timeframe,body.source)
+                    return True,None
+                except ValueError as exc:
+                    if '429' in str(exc): paused.set()
+                    return False,str(exc)
+            def snapshot():
+                return {'mode':body.mode,'holding':body.holding,'scope':coverage['label'],'coverage':coverage,
+                        'generated_at':store.now(),'rows':list(rows),'errors':sorted(set(errors)),
+                        'basket_symbols':[i['symbol'] for i in instruments], 'missing_symbols':missing,
+                        'refreshed':loaded,'evaluated':len(rows),'processed':processed,'total':len(instruments),
+                        'with_history':with_history,'complete':processed==len(instruments),
+                        'configured':broker.configured,'live_execution':False,'filters':cfg}
+            # Publish batches as they finish; no 25-stock scan cap or watchlist mutation.
+            workers=1 if broker.configured and body.source!='public' else 4
+            with ThreadPoolExecutor(max_workers=workers,thread_name_prefix='scan-history') as readers:
+                for start in range(0,len(instruments),10):
+                    if update.cancelled(): break
+                    batch=instruments[start:start+10]
+                    update(3+int(95*start/len(instruments)),f'Checking {start+1}–{min(start+10,len(instruments))} of {len(instruments)} stocks',snapshot())
+                    for inst,result in zip(batch,readers.map(history_one,batch)):
+                        ok,error=result; loaded+=int(ok)
+                        if error: errors.append(inst['symbol']+': '+error)
+                    snapshots={}; quotes={}; statuses={}
+                    if not broker.configured and not paused.is_set():
+                        from .public_quotes import public_quote
+                        with ThreadPoolExecutor(max_workers=3,thread_name_prefix='scan-price') as prices:
+                            futures=[(inst,prices.submit(public_quote,inst)) for inst in batch]
+                            for inst,future in futures:
+                                try: snapshots[inst['instrument_key']]=future.result()
+                                except ValueError as exc:
+                                    errors.append(inst['symbol']+' price: '+str(exc))
+                                    if '429' in str(exc): paused.set()
+                    if derivatives:
+                        if broker.configured:
+                            try: quotes=broker.quotes([i['instrument_key'] for i in batch])
+                            except ValueError as exc: errors.append(str(exc))
+                            try: statuses=broker.exchange_status('NSE')
+                            except ValueError as exc: errors.append(str(exc))
+                        for inst in batch:
+                            key=inst['instrument_key']; data=universe.history(key,timeframe)
+                            rows.append(build_derivative_idea(inst,data,universe.contracts(key),body.mode,body.holding,
+                                        universe.status(),store.account(),quotes.get(key) or snapshots.get(key),broker,statuses))
+                    else:
+                        board=desk.board(body.mode,cfg,instruments=batch,public_snapshots=snapshots)
+                        # Discovery cards re-fetch full evidence on review. Avoid sending model
+                        # metadata, long copy records and duplicate checklists on every batch.
+                        for row in board['rows']:
+                            compact={k:v for k,v in row.items() if k not in ('model','checks','market','advisory','event_risk')}
+                            compact['trade_plan']={k:v for k,v in row.get('trade_plan',{}).items()
+                                                   if k not in ('checks','copy_text','limitations')}
+                            rows.append(compact)
+                        errors.extend(board['errors'])
+                    with_history+=sum(bool(universe.history(i['instrument_key'],timeframe)) for i in batch)
+                    processed+=len(batch)
+                    update(3+int(95*processed/len(instruments)),f'{processed} of {len(instruments)} stocks checked',snapshot())
+            result=snapshot()
+            result['cancelled']=update.cancelled()
             return result
         return launch(work)
+
+    @app.post('/api/recommendations/review-derivative')
+    def review_derivative(body:DerivativeReview):
+        if body.product not in ('Options','Futures') or body.holding not in ('Intraday','Swing'):
+            raise ValueError('Invalid derivative product or holding period.')
+        inst=universe.get(body.instrument_key); timeframe='15m' if body.holding=='Intraday' else '1d'
+        contracts=universe.contracts(body.instrument_key)
+        if not contracts: raise ValueError('No current derivative contracts are listed for this instrument.')
+        data=universe.history(body.instrument_key,timeframe)
+        if history_due(data,timeframe):
+            desk.refresh_history(body.instrument_key,timeframe)
+            data=universe.history(body.instrument_key,timeframe)
+        quote=None; market=None; errors=[]
+        try:
+            if broker.configured:
+                quote=broker.quotes([body.instrument_key]).get(body.instrument_key)
+                market=broker.exchange_status(inst['exchange'])
+            else:
+                from .public_quotes import public_quote
+                quote=public_quote(inst)
+        except ValueError as exc: errors.append(str(exc))
+        row=build_derivative_idea(inst,data,contracts,body.product,body.holding,universe.status(),store.account(),quote,broker,market)
+        row['data_errors']=errors
+        return row
 
     @app.get('/api/models')
     def model_list(): return models.list()
