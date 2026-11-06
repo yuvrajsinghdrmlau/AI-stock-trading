@@ -9,6 +9,7 @@ from .strategies import CATALOG, analyse
 from .research import config_for
 from .public_history import public_history
 from .trade_plans import build_trade_plan, plan_text
+from .mode_data import mode_data, mode_dataset, redact_unavailable
 
 MODE_STRATEGIES={'Swing':['trend_pullback','range_breakout'],'Intraday':['opening_range','vwap_pullback'],'Delivery':['position_trend']}
 
@@ -129,28 +130,37 @@ class Desk:
         self.universe.link(key,timeframe,ident)
         return {'dataset_id':ident,'bars':len(bars),'last_bar':bars[-1]['t'],'warnings':warnings}
 
-    def evaluate(self, inst, strategy, cfg, account, catalogue, quote=None, market=None, public_snapshot=None):
+    def evaluate(self, inst, strategy, cfg, account, catalogue, quote=None, market=None, public_snapshot=None, live_feed=None):
         spec=CATALOG[strategy]; data=self.universe.history(inst['instrument_key'],spec['timeframe'])
         if not data:
-            return {'instrument':inst,'strategy':strategy,'strategy_name':spec['name'],'mode':spec['mode'],
+            return redact_unavailable({'instrument':inst,'strategy':strategy,'strategy_name':spec['name'],'mode':spec['mode'],
                 'status':'DATA_REQUIRED','reasons':['Load '+spec['timeframe']+' history for this stock.'],
                 'probability':None,'quote':quote,'public_snapshot':public_snapshot,
-                'trade_plan':{'decision':'DATA_REQUIRED','entry':None}}
+                'data_status':mode_data(spec['mode'],inst['instrument_key'],feed=live_feed,quote=quote,broker_configured=self.broker.configured),
+                'trade_plan':{'decision':'DATA_REQUIRED','entry':None}})
+        data=mode_dataset(spec['mode'],inst['instrument_key'],data,live_feed)
         a={**analyse(data['bars'],data['timeframe'],strategy),'strategy':strategy}
         model=self.models.infer(inst['instrument_key'],strategy,data)
         row=evaluate_candidate(inst,data,a,quote,market,model,account,catalogue,cfg)
         row['spark']=[bar['c'] for bar in data['bars'][-30:]]
         row['public_snapshot']=public_snapshot
         row['trade_plan']=build_trade_plan(row,data,a,catalogue,cfg)
+        row['data_status']=mode_data(spec['mode'],inst['instrument_key'],dataset=data,feed=live_feed,
+                                      quote=quote,broker_configured=self.broker.configured)
         if not self.broker.configured and row['trade_plan']['decision']=='CONDITIONAL_BUY':
             row['status']='PUBLIC_RESEARCH_SETUP' if data['timeframe']=='15m' else 'HISTORICAL_SETUP'
         row['trade_plan']['copy_text']=plan_text(row)
+        redact_unavailable(row)
         self._audit(row)
         return row
 
     def review(self,key,strategy,filters=None,latest_price=False):
         if strategy not in CATALOG: raise ValueError('Unknown strategy.')
         inst=self.universe.get(key); quote=None; market=None; errors=[]; public_snapshot=None
+        cached=self.universe.history(key,CATALOG[strategy]['timeframe'])
+        if self.broker.configured and cached and not cached.get('source','').startswith('Upstox V3 |'):
+            try:self.refresh_history(key,CATALOG[strategy]['timeframe'],'broker')
+            except ValueError as exc:errors.append(str(exc))
         if self.broker.configured:
             try: quote=self.broker.quotes([key]).get(key)
             except ValueError as exc: errors.append(str(exc))
@@ -164,7 +174,7 @@ class Desk:
         row['data_errors']=errors
         return row
 
-    def board(self,mode,filters=None,instruments=None,public_snapshots=None):
+    def board(self,mode,filters=None,instruments=None,public_snapshots=None,live_feed=None):
         if mode not in MODE_STRATEGIES: raise ValueError('Use Swing, Intraday or Delivery. F&O has a separate read-only chain.')
         cfg=filters_config(filters); watched=self.universe.watch() if instruments is None else instruments
         keys=[r['instrument_key'] for r in watched if not r.get('unavailable')]
@@ -184,7 +194,7 @@ class Desk:
                 continue
             for strategy in MODE_STRATEGIES[mode]:
                 rows.append(self.evaluate(inst,strategy,cfg,account,catalogue,quotes.get(inst['instrument_key']),statuses.get(inst['exchange']),
-                                          (public_snapshots or {}).get(inst['instrument_key'])))
+                                          (public_snapshots or {}).get(inst['instrument_key']),live_feed))
         rows.sort(key=lambda r:(r.get('trade_plan',{}).get('decision')=='CONDITIONAL_BUY',
             r.get('trade_plan',{}).get('live_qualified',False),r.get('setup_score') or 0),reverse=True)
         total=len(rows)
@@ -199,7 +209,8 @@ class Desk:
         # the first forecast. This is local research provenance, not a tamper-proof ledger.
         key='|'.join([row['instrument']['instrument_key'],row['strategy'],row['last_bar'],row['model'].get('model_id','none'),row['status'],row['trade_plan']['id']])
         ident=hashlib.sha256(key.encode()).hexdigest()
-        body={k:row.get(k) for k in ('strategy','last_bar','probability','status','generated_at','reasons','plan','trade_plan')}
+        body={k:row.get(k) for k in ('strategy','last_bar','probability','status','generated_at','reasons','plan','trade_plan','mode','data_status')}
+        body['result']='PENDING'
         body.update(instrument_key=row['instrument']['instrument_key'],model_id=row['model'].get('model_id'),prospective=row['model'].get('prospective',False))
         with self.store.db() as db:
             db.execute('INSERT OR IGNORE INTO signal_audit VALUES(?,?,?)',(ident,self.store.now(),json.dumps(body,allow_nan=False)))

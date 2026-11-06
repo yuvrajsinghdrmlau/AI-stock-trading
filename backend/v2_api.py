@@ -14,6 +14,7 @@ from .data import IST, parse_time, csv_bars
 from .trade_plans import BROKER_PLATFORMS, DATA_OPTIONS
 from .recommendations import select_universe, history_due, SCOPES
 from .derivative_ideas import build_derivative_idea
+from .mode_data import mode_data, mode_availability, age_cached_row, redact_unavailable
 
 class WatchChange(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -114,6 +115,7 @@ def register_v2(app,store,universe,broker,models,desk):
     @app.get('/api/market/config')
     def market_config():
         return {'upstox_configured':broker.configured,'catalogue':universe.status(),'watchlist':universe.watch(),
+            'mode_availability':mode_availability(getattr(app.state,'live_candles',None)),
             'filters':DEFAULT_FILTERS,'live_orders':False,'poll_seconds':20,'max_watched':25,
             'brokers':BROKER_PLATFORMS,'data_options':DATA_OPTIONS,
             'notes':['Catalogue search is not restricted to the live watchlist.', 'A REST snapshot is not a tick-by-tick stream.','Authenticated data requests are subject to your provider entitlements.']}
@@ -206,7 +208,9 @@ def register_v2(app,store,universe,broker,models,desk):
 
     @app.post('/api/recommendations/scan')
     def recommendations(body:RecommendationScan):
-        if body.mode not in (*MODE_STRATEGIES,'Options','Futures'): raise ValueError('Use Intraday, Swing, Delivery, Options or Futures.')
+        if body.mode not in (*MODE_STRATEGIES,'Options','Futures','Scalper'): raise ValueError('Unknown trade mode.')
+        if body.mode=='Scalper':
+            raise ValueError('Scalper unavailable: live data not connected and no validated scalper strategy is installed.')
         if body.scope not in SCOPES: raise ValueError('Unknown stock universe.')
         if body.holding not in ('Intraday','Swing'): raise ValueError('Use Intraday or Swing holding for F&O.')
         if body.source not in ('auto','public','broker'): raise ValueError('Invalid history source.')
@@ -224,7 +228,9 @@ def register_v2(app,store,universe,broker,models,desk):
             def history_one(inst):
                 if paused.is_set(): return False, 'Provider rate limit reached; use cached data or retry later.'
                 existing=universe.history(inst['instrument_key'],timeframe)
-                if not body.refresh and not history_due(existing,timeframe): return False,None
+                broker_needed=(broker.configured and body.source!='public' and existing
+                               and not existing.get('source','').startswith('Upstox V3 |'))
+                if not body.refresh and not broker_needed and not history_due(existing,timeframe): return False,None
                 try:
                     desk.refresh_history(inst['instrument_key'],timeframe,body.source)
                     return True,None
@@ -266,10 +272,16 @@ def register_v2(app,store,universe,broker,models,desk):
                             except ValueError as exc: errors.append(str(exc))
                         for inst in batch:
                             key=inst['instrument_key']; data=universe.history(key,timeframe)
-                            rows.append(build_derivative_idea(inst,data,universe.contracts(key),body.mode,body.holding,
-                                        universe.status(),store.account(),quotes.get(key) or snapshots.get(key),broker,statuses))
+                            row=build_derivative_idea(inst,data,universe.contracts(key),body.mode,body.holding,
+                                        universe.status(),store.account(),quotes.get(key) or snapshots.get(key),broker,statuses)
+                            row['data_status']=mode_data(body.mode,key,dataset=data,
+                                feed=getattr(app.state,'live_candles',None),quote=quotes.get(key),
+                                contract=row['idea'].get('contract'),contract_quote=row['idea'].get('contract_quote'),
+                                broker_configured=broker.configured)
+                            rows.append(redact_unavailable(row))
                     else:
-                        board=desk.board(body.mode,cfg,instruments=batch,public_snapshots=snapshots)
+                        board=desk.board(body.mode,cfg,instruments=batch,public_snapshots=snapshots,
+                                         live_feed=getattr(app.state,'live_candles',None))
                         # Discovery cards re-fetch full evidence on review. Avoid sending model
                         # metadata, long copy records and duplicate checklists on every batch.
                         for row in board['rows']:
@@ -291,11 +303,14 @@ def register_v2(app,store,universe,broker,models,desk):
 
     @app.get('/api/recommendations/latest')
     def latest_recommendations(mode:str='Delivery',scope:str='nifty500',holding:str='Intraday'):
-        if mode not in (*MODE_STRATEGIES,'Options','Futures') or scope not in SCOPES or holding not in ('Intraday','Swing'):
+        if mode not in (*MODE_STRATEGIES,'Options','Futures','Scalper') or scope not in SCOPES or holding not in ('Intraday','Swing'):
             raise ValueError('Invalid saved-scan selection.')
         with store.db() as db:
             row=db.execute('SELECT body FROM recommendation_cache WHERE id=?',('|'.join((mode,scope,holding)),)).fetchone()
-        return {**json.loads(row['body']),'cached':True} if row else None
+        if not row:return None
+        saved=json.loads(row['body'])
+        saved['rows']=[age_cached_row(item) for item in saved['rows']]
+        return {**saved,'cached':True}
 
     @app.post('/api/recommendations/review-derivative')
     def review_derivative(body:DerivativeReview):
@@ -305,7 +320,7 @@ def register_v2(app,store,universe,broker,models,desk):
         contracts=universe.contracts(body.instrument_key)
         if not contracts: raise ValueError('No current derivative contracts are listed for this instrument.')
         data=universe.history(body.instrument_key,timeframe)
-        if history_due(data,timeframe):
+        if history_due(data,timeframe) or (broker.configured and data and not data.get('source','').startswith('Upstox V3 |')):
             desk.refresh_history(body.instrument_key,timeframe)
             data=universe.history(body.instrument_key,timeframe)
         quote=None; market=None; errors=[]
@@ -318,8 +333,12 @@ def register_v2(app,store,universe,broker,models,desk):
                 quote=public_quote(inst)
         except ValueError as exc: errors.append(str(exc))
         row=build_derivative_idea(inst,data,contracts,body.product,body.holding,universe.status(),store.account(),quote,broker,market)
+        row['data_status']=mode_data(body.product,body.instrument_key,dataset=data,
+            feed=getattr(app.state,'live_candles',None),quote=quote if broker.configured else None,
+            contract=row['idea'].get('contract'),contract_quote=row['idea'].get('contract_quote'),
+            broker_configured=broker.configured)
         row['data_errors']=errors
-        return row
+        return redact_unavailable(row)
 
     @app.get('/api/models')
     def model_list(): return models.list()

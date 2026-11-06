@@ -43,7 +43,7 @@ def build(inputs, product='Options', **kwargs):
 def broker_fixture(contract_key, **changes):
     q = {'instrument_key':contract_key,'last_price':20,'bid':19.95,'ask':20,
          'fresh':True,'feed_time':NOW.isoformat(),'trade_time':NOW.isoformat(),'received_at':NOW.isoformat(),
-         'spread_bps':25,'volume':10000}
+         'spread_bps':25,'volume':10000,'open_interest':5000}
     q.update(changes)
     broker=Mock(configured=True)
     broker.quotes.return_value={contract_key:q}
@@ -87,6 +87,7 @@ def test_verified_contract_quote_produces_premium_levels_and_lot_cost(inputs):
 
 
 @pytest.mark.parametrize('changes',[{'fresh':False},{'spread_bps':300},{'bid':21},{'spread_bps':-1},
+    {'open_interest':None},
     {'feed_time':(NOW-timedelta(minutes=5)).isoformat()}, {'instrument_key':'NSE_FO|WRONG'}, {'volume':0},
     {'trade_time':(NOW-timedelta(seconds=120)).isoformat()}])
 def test_unusable_derivative_quotes_never_issue_trade(inputs,changes):

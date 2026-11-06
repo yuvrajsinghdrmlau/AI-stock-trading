@@ -1,6 +1,6 @@
 /* Beginner trading desk. Source times and server decisions remain authoritative. */
-const discoveryState={mode:'Delivery',scope:'nifty500',holding:'Intraday',job:null,result:null,busy:false,progress:0,message:'',error:null,request:0,limit:12,filter:'setups',query:''};
-const tipModes={Delivery:['Delivery','Buy shares; hold for weeks'],Intraday:['Intraday','Buy shares; exit the same day'],Swing:['Swing','Hold shares for a few days'],Options:['Calls & puts','Options on stocks and indices'],Futures:['Futures','Buy or sell a listed futures contract']};
+const discoveryState={mode:'Delivery',scope:'nifty500',holding:'Intraday',job:null,result:null,busy:false,progress:0,message:'',error:null,request:0,limit:12,filter:'setups',query:'',availability:{}};
+const tipModes={Delivery:['Delivery','Buy shares; hold for weeks'],Intraday:['Intraday','Buy shares; exit the same day'],Swing:['Swing','Hold shares for a few days'],Options:['Calls & puts','Options on stocks and indices'],Futures:['Futures','Buy or sell a listed futures contract'],Scalper:['Scalper','Quick trades with a live feed']};
 const tipScopes={nifty500:'Nifty 500 · broad market',nifty200:'Nifty 200',nifty100:'Nifty 100',nifty50:'Nifty 50',all_nse:'All regular NSE stocks',fo:'All NSE F&O stocks & indices'};
 try{
   const saved=JSON.parse(localStorage.getItem('indiaQuant.tradePreferences')||'{}');
@@ -19,18 +19,29 @@ function tipAge(value){
   const seconds=Math.max(0,Math.floor((Date.now()-stamp)/1000));
   return seconds<60?'Just updated':seconds<3600?Math.floor(seconds/60)+' min old':seconds<86400?Math.floor(seconds/3600)+' hr old':Math.floor(seconds/86400)+' days old';
 }
+function tipData(row){
+  const data=row.data_status||{status:'Unavailable',actionable:false,reason:'Saved scan needs a refresh.'};
+  const made=Date.parse(row.generated_at);
+  if(data.status==='Live'&&Number.isFinite(made)&&Date.now()-made>=20000){
+    return {...data,status:['Delivery','Swing'].includes(row.mode)?'Delayed':['Options','Futures'].includes(row.mode)?'Partial':'Stale',actionable:false,
+      reason:'The live snapshot expired. Recheck this idea for current data.'};
+  }
+  return data;
+}
 function currentTip(row){
+  const data=tipData(row);
   if(row.idea){
     const p=row.idea,expired=!!p.expires_at&&Date.parse(p.expires_at)<=Date.now();
-    const buy=p.decision==='REVIEW_TRADE'&&!expired;
-    const setup=!!p.action&&!!p.underlying_levels&&!expired;
-    const label=expired?'RECHECK':buy?'TRADE TO REVIEW':p.decision==='BUDGET_TOO_SMALL'?'PRACTISE ONLY':setup?(p.action==='BUY_CALL'?'CALL IDEA':p.action==='BUY_PUT'?'PUT IDEA':'FUTURES IDEA'):'WAIT';
+    const buy=p.decision==='REVIEW_TRADE'&&data.actionable===true&&p.basis==='VALIDATED_MODEL_AND_RULES'&&!expired;
+    const setup=!!p.action&&!!p.underlying_levels&&!expired&&data.status!=='Unavailable';
+    const label=expired?'RECHECK':buy?'TRADE TO REVIEW':p.decision==='BUDGET_TOO_SMALL'?'PRACTISE ONLY':setup?data.status==='Stale'?'RECHECK DATA':!p.contract?'CONTRACT NEEDED':data.actionable===false?'NEEDS LIVE QUOTE':p.basis!=='VALIDATED_MODEL_AND_RULES'?'QUOTE READY · RESEARCH':p.action==='BUY_CALL'?'CALL IDEA':p.action==='BUY_PUT'?'PUT IDEA':'FUTURES IDEA':'WAIT';
     return {plan:p,buy,setup,expired,label};
   }
   const p=row.trade_plan||{},expires=Date.parse(p.expires_at);
-  const buy=p.decision==='CONDITIONAL_BUY'&&p.entry&&Number.isFinite(expires)&&expires>Date.now();
+  const allowed=data.status==='Live'||(['Delivery','Swing'].includes(row.mode)&&data.status==='Delayed');
+  const buy=p.decision==='CONDITIONAL_BUY'&&p.basis==='VALIDATED_MODEL_AND_RULES'&&p.entry&&Number.isFinite(expires)&&expires>Date.now()&&allowed;
   const expired=p.decision==='EXPIRED'||(p.decision==='CONDITIONAL_BUY'&&!buy);
-  return {plan:p,buy,setup:buy,expired,label:buy?'BUY SETUP':expired?'RECHECK':'WAIT'};
+  return {plan:p,buy,setup:buy,expired,label:buy?'BUY SETUP':expired?'RECHECK':p.decision==='CONDITIONAL_BUY'?'RESEARCH ONLY':'WAIT'};
 }
 function bestStockTips(rows){
   const selected=new Map();
@@ -39,15 +50,21 @@ function bestStockTips(rows){
   return [...selected.values()].sort((a,b)=>rank(b)-rank(a)||String(a.instrument.symbol).localeCompare(String(b.instrument.symbol)));
 }
 function tipPrice(row){
+  const data=tipData(row);
+  if(data.status==='Unavailable')return {price:null,label:'Price unavailable',time:null,source:null};
   const q=row.public_snapshot,b=row.quote;
-  if(b?.last_price>0&&b.fresh)return {price:b.last_price,label:'Broker snapshot',time:b.feed_time,source:b.source};
-  if(q?.last_price>0){const age=(Date.now()-Date.parse(q.price_time))/1000;return {price:q.last_price,label:age>900?'Older public price':age>120?'Delayed public price':'Public price snapshot',time:q.price_time,source:q.source};}
+  if(b?.last_price>0&&b.fresh&&Date.now()-Date.parse(b.received_at)<20000)return {price:b.last_price,label:'Broker snapshot',time:b.feed_time,source:b.source};
+  if(q?.last_price>0){const age=(Date.now()-Date.parse(q.price_time))/1000;return {price:q.last_price,label:age>900?'Older public price':'Public price (unverified)',time:q.price_time,source:q.source};}
   const reference=row.trade_plan?.entry?.reference||row.plan?.reference_entry||row.last_close;
   return {price:reference>0?reference:null,label:reference>0?'Last completed close':'Price unavailable',time:row.last_bar,source:row.trade_plan?.data_source||'Completed candles'};
 }
+function tipDataBadge(row){const data=tipData(row);return `<p class="tip-data-status" data-status="${h(data.status)}"><strong>Data: ${h(data.status)}</strong> · ${h(data.reason||'Check the data source before using this idea.')}</p>`;}
 function tipReason(row){
-  const t=currentTip(row);if(row.idea)return t.expired?'The snapshot expired. Recheck this idea for current prices.':row.idea.reasons?.[0]||'Waiting for a setup.';
+  const t=currentTip(row),data=tipData(row);
+  if(row.idea)return t.expired?'The snapshot expired. Recheck this idea for current prices.':data.status==='Unavailable'||data.status==='Stale'?data.reason:row.idea.decision==='REVIEW_TRADE'&&row.idea.basis!=='VALIDATED_MODEL_AND_RULES'?'A contract quote is available, but this direction has no passing out-of-sample strategy evidence. Research only.':row.idea.reasons?.[0]||'Waiting for a setup.';
+  if(data.status==='Unavailable'||data.status==='Stale')return data.reason;
   if(t.buy)return t.plan.entry.rule==='NEXT_SESSION_OPEN'?'Buy only if the next session opens inside the entry range.':'Buy only if the next 15-minute candle opens inside the entry range.';
+  if(t.plan.decision==='CONDITIONAL_BUY'&&t.plan.basis!=='VALIDATED_MODEL_AND_RULES')return 'Rules match, but the strategy has no passing out-of-sample evidence. Research only.';
   if(t.expired)return 'The entry window passed. Refresh to check a new setup.';
   const reason=t.plan.reasons?.[0]||row.reasons?.[0]||'The entry conditions do not match yet.';
   const plain={'Trend does not pass your filter.':'The stock is not in the required upward trend.','The strategy has no entry setup on the last completed candle.':'The latest candle does not confirm a buy.','Checklist does not pass your filter.':'Too few entry conditions match.','Volume does not pass your filters.':'Trading volume is too low for this setup.','RSI does not pass your filter.':'Momentum is outside the entry range.','The local paper account cannot fit this plan within its risk limits.':'This trade does not fit your practice account’s cash or risk limit.'};
@@ -57,21 +74,21 @@ function tipLevels(labels,values){return `<div class="tip-levels">${labels.map((
 function tipMiniChart(row){const values=row.spark||[];return values.length>1?`<div class="tip-mini-chart">${spark(values,values.at(-1)>=values[0]).replace('viewBox=','preserveAspectRatio="none" viewBox=')}<small>Last ${values.length} completed closes</small></div>`:'';}
 function stockTipCard(row){
   const t=currentTip(row),p=t.plan,i=row.instrument,q=tipPrice(row),e=p.entry;
-  return `<article class="stock-tip ${t.buy?'stock-tip-buy':''}" data-tip-key="${h(i.instrument_key)}" data-tip-expiry="${t.buy?h(p.expires_at):''}">
+  return `<article class="stock-tip ${t.buy?'stock-tip-buy':''} ${row.data_status?.status==='Unavailable'?'stock-tip-unavailable':''}" data-tip-key="${h(i.instrument_key)}" data-tip-expiry="${t.buy?h(p.expires_at):''}">
     <div class="tip-card-head"><div><h2>${h(i.symbol)}</h2><p>${h(i.name||i.symbol)}</p></div><span class="tip-badge ${t.buy?'tip-buy':'tip-wait'}" data-tip-decision>${h(t.label)}</span></div>
     <div class="tip-price"><strong>${q.price==null?'Unavailable':money(q.price,2)}</strong><div><span>${h(q.label)}</span><small>${h(q.time?tipTime(q.time)+' · '+tipAge(q.time):'Refresh to request market data')}</small></div></div>
-    ${tipMiniChart(row)}<p class="tip-explanation" data-tip-explanation>${h(tipReason(row))}</p>
+    ${tipDataBadge(row)}${tipMiniChart(row)}<p class="tip-explanation" data-tip-explanation>${h(tipReason(row))}</p>
     ${t.buy?`<div class="tip-action-levels">${tipLevels(['Buy reference','Stop-loss','Target'],[e.reference,e.stop_at_reference,e.target_at_reference])}<p>Buy range: <strong>${money(e.min,2)} – ${money(e.max,2)}</strong></p><p class="small">${row.plan?.quantity||0} shares in the practice account · planned loss ${money(row.plan?.planned_loss_with_estimated_costs||0,2)}</p><p class="tip-expiry">Entry ${h(tipTime(p.entry_window))} · recheck by ${h(tipTime(p.expires_at))}</p><p class="small muted">At another fill: stop = entry − ${money(e.stop_distance,2)}; target = entry + ${money(e.target_distance,2)}.</p></div>`:''}
     <div class="tip-card-actions">${row.dataset_id?`<button class="button ${t.buy?'primary':'subtle'}" data-review-key="${h(i.instrument_key)}" data-review-strategy="${h(row.strategy)}" data-review-latest="true">${t.buy?'Review trade':'Why wait?'}</button>`:''}<button class="button subtle" data-stock="${h(i.instrument_key)}" data-stock-strategy="${h(row.strategy||'trend_pullback')}">See chart</button>${toolButton(row)}</div>
     <details class="tip-evidence"><summary>Signal details</summary><p>${h(row.strategy_name||'Entry conditions')} · ${h(p.basis==='VALIDATED_MODEL_AND_RULES'?'Model and rules':'Technical rules')}</p><p>Signal candle: ${h(tipTime(row.last_bar))}</p><p>Source: ${h(q.source||'Unavailable')}</p>${(p.reasons||[]).map(r=>`<p>${h(r)}</p>`).join('')}</details></article>`;
 }
 function derivativeTipCard(row){
-  const t=currentTip(row),p=row.idea,i=row.instrument,c=p.contract,u=p.underlying_levels,l=p.contract_levels,q=tipPrice(row);
+  const t=currentTip(row),p=row.idea,i=row.instrument,c=p.contract,u=p.underlying_levels,l=tipData(row).actionable?p.contract_levels:null,q=tipPrice(row);
   const action={BUY_CALL:'Buy call (CE)',BUY_PUT:'Buy put (PE)',BUY_FUTURE:'Buy futures',SELL_FUTURE:'Sell futures'}[p.action]||'Wait for a direction';
-  return `<article class="stock-tip ${t.buy?'stock-tip-buy':t.setup?'stock-tip-idea':''}" data-tip-key="${h(i.instrument_key)}" data-tip-expiry="${p.expires_at?h(p.expires_at):''}">
+  return `<article class="stock-tip ${t.buy?'stock-tip-buy':t.setup?'stock-tip-idea':''} ${row.data_status?.status==='Unavailable'?'stock-tip-unavailable':''}" data-tip-key="${h(i.instrument_key)}" data-tip-expiry="${p.expires_at?h(p.expires_at):''}">
     <div class="tip-card-head"><div><h2>${h(i.symbol)}</h2><p>${h(action)}</p></div><span class="tip-badge ${t.buy?'tip-buy':'tip-wait'}" data-tip-decision>${h(t.label)}</span></div>
     <p class="small muted">Underlying ${q.price==null?'price unavailable':money(q.price,2)} · ${h(q.label)}<br>${h(q.time?tipTime(q.time):'')}</p>
-    ${tipMiniChart(row)}<p class="tip-explanation" data-tip-explanation>${h(tipReason(row))}</p>
+    ${tipDataBadge(row)}${tipMiniChart(row)}<p class="tip-explanation" data-tip-explanation>${h(tipReason(row))}</p>
     ${c?`<div class="tip-contract"><strong>${h(c.symbol)}</strong><span>Expiry ${h(c.expiry)} · ${c.lot_size} units per lot${c.strike?' · strike '+money(c.strike,2):''}</span></div>`:''}
     ${l&&!t.expired?`<div class="tip-action-levels"><p class="tip-level-caption">${row.mode==='Options'?'Option premium':'Futures price'} per unit</p>${tipLevels(['Entry reference','Stop-loss','Target'],[l.entry,l.stop,l.target])}<p>1 lot = ${l.quantity} units · planned stop risk ${money(l.planned_risk,2)}</p>${l.premium_cost?`<p>Premium to pay: ${money(l.premium_cost,2)}<br>Full premium at risk: ${money(l.maximum_premium_loss,2)}</p>`:'<p>Check required futures margin on your broker.</p>'}<p class="small muted">${h(l.basis)}. Gaps can exceed the planned stop loss.</p></div>`:u?`<div class="tip-underlying"><p class="tip-level-caption">Underlying trigger · these are ${h(i.symbol)} levels</p>${tipLevels([u.side==='ABOVE'?'Cross above':'Cross below','Invalidation','Target'],[u.trigger,u.stop,u.target])}<p class="small muted">${row.mode==='Options'?'These numbers are stock/index levels, not option premiums.':'These numbers are stock/index levels, not futures entry prices.'}</p></div>`:''}
     <div class="tip-card-actions"><button class="button ${t.buy?'primary':'subtle'}" data-derivative-review="${h(i.instrument_key)}">${t.buy?'Recheck & review trade':'Check contract & next steps'}</button><button class="button subtle" data-stock="${h(i.instrument_key)}" data-stock-strategy="${h(row.strategy)}">See chart</button>${toolButton(row)}</div>
@@ -80,13 +97,15 @@ function derivativeTipCard(row){
 function beginnerGuide(){return `<details class="tips-guide"><summary>New to trading? Start here <span>What these trade types and numbers mean</span></summary><div class="tips-guide-grid"><div><h3>1. Pick a trade type</h3><p><strong>Delivery:</strong> own shares and hold them for weeks. <strong>Swing:</strong> hold shares for days. <strong>Intraday:</strong> close the trade the same day.</p><p><strong>Call:</strong> an option that benefits from an upward move. <strong>Put:</strong> an option that benefits from a downward move. <strong>Futures:</strong> a leveraged contract you can buy or sell.</p></div><div><h3>2. Read the plan</h3><p><strong>Entry:</strong> where the setup allows a trade. <strong>Stop-loss:</strong> the exit level if it moves against you. <strong>Target:</strong> the planned profit-taking level.</p><p><strong>Lot:</strong> the minimum number of F&O units in one contract. Options can lose the full premium; futures require margin and can lose more than it.</p></div><div><h3>3. Practise, then use your broker</h3><p>Begin with Delivery and a small practice position. A WAIT card means the conditions do not match; it is useful to skip a trade.</p><p>Recheck current prices, expiry and quantity on your own broker. Entry, stop and target orders must be placed there. A stop price does not guarantee a fill.</p></div></div></details>`;}
 async function renderRecommendations(){
   stopDeskTimer();const config=await api('/market/config');if(state.page!=='recommendations')return;marketState.brokers=config.brokers;
+  discoveryState.availability=config.mode_availability||{};
+  if(discoveryState.availability[discoveryState.mode]?.enabled===false)discoveryState.mode='Delivery';
   if(!discoveryState.result&&!discoveryState.busy&&!discoveryState.error){
-    try{const cached=await api('/recommendations/latest?'+new URLSearchParams({mode:discoveryState.mode,scope:discoveryState.scope,holding:discoveryState.holding}));if(cached?.rows)discoveryState.result=cached;}catch(err){discoveryState.error=err.message;}
+    try{const cached=await api('/recommendations/latest?'+new URLSearchParams({mode:discoveryState.mode,scope:discoveryState.scope,holding:discoveryState.holding}));if(cached?.rows&&cached.rows.every(row=>row.data_status))discoveryState.result=cached;}catch(err){discoveryState.error=err.message;}
     if(state.page!=='recommendations')return;
   }
   const derivatives=['Options','Futures'].includes(discoveryState.mode);
   $('#content').innerHTML=`${config.catalogue.source_headers?.fixture?'<div class="banner"><p>OFFLINE UI TEST: fictional listings and prices, used to verify the interface.</p></div>':''}<div class="tips-heading"><div><div class="eyebrow">A CLEAR PLAN BEFORE EVERY TRADE</div><h1>Your trade ideas</h1><p>Choose your trade type. We find setups across the market for you.</p></div><button class="button primary" data-discovery-refresh>Find trade ideas</button></div>
-    <div class="tips-modes" aria-label="Trade type">${Object.entries(tipModes).map(([mode,[label,description]])=>`<button data-tip-mode="${mode}" class="${discoveryState.mode===mode?'selected':''}"><strong>${h(label)}</strong><span>${h(description)}</span></button>`).join('')}</div>
+    <div class="tips-modes" aria-label="Trade type">${Object.entries(tipModes).map(([mode,[label,description]])=>`<button data-tip-mode="${mode}" class="${discoveryState.mode===mode?'selected':''}" ${discoveryState.availability[mode]?.enabled===false?'disabled':''} title="${h(discoveryState.availability[mode]?.reason||'')}"><strong>${h(label)}</strong><span>${h(discoveryState.availability[mode]?.enabled===false?discoveryState.availability[mode].reason:description)}</span></button>`).join('')}</div>
     <div class="tips-toolbar"><label for="tips-universe">Stocks to scan<select id="tips-universe">${Object.entries(tipScopes).map(([key,label])=>`<option value="${key}" ${key===discoveryState.scope?'selected':''}>${h(label)}</option>`).join('')}</select></label>${derivatives?`<label for="tips-holding">Time horizon<select id="tips-holding"><option value="Intraday" ${discoveryState.holding==='Intraday'?'selected':''}>Today · check entry & contract price</option><option value="Swing" ${discoveryState.holding==='Swing'?'selected':''}>Next session · trend ideas</option></select></label>`:''}<p>No watchlist or individual search needed.<br><span>Practice capital ${money(state.boot.account.settings.capital)} · risk per trade ${state.boot.account.settings.risk_pct}%</span></p></div>
     <div class="tip-card-actions tips-personal-tools"><button class="button subtle" data-open-alert-center>My price alerts</button><button class="button subtle" data-open-practice-budget>Set practice budget</button><span class="small muted">Open a stock’s Trade toolkit for entry timing, replay and headlines.</span></div>${beginnerGuide()}<div id="discovery-progress" role="status" aria-live="polite"></div><div id="tips-summary"></div>
     <div class="tips-results-controls"><label for="tips-view">Show<select id="tips-view"><option value="setups">Trade setups first</option><option value="ready">Ready to review</option><option value="all">All checked stocks</option></select></label><label for="tips-search">Find in results<input id="tips-search" type="search" placeholder="Stock or company name" value="${h(discoveryState.query)}"></label></div><div id="stock-tips"></div><div id="tips-more"></div>
@@ -101,7 +120,7 @@ async function renderRecommendations(){
 function updateDiscoveryControls(){
   for(const b of document.querySelectorAll('[data-open-practice-budget]'))b.disabled=discoveryState.busy;
   for(const b of document.querySelectorAll('[data-discovery-refresh]')){b.disabled=discoveryState.busy;b.textContent=discoveryState.busy?'Scanning…':'Find / refresh trade ideas';}
-  for(const b of document.querySelectorAll('[data-tip-mode]')){b.disabled=discoveryState.busy;b.classList.toggle('selected',b.dataset.tipMode===discoveryState.mode);}
+  for(const b of document.querySelectorAll('[data-tip-mode]')){b.disabled=discoveryState.busy||discoveryState.availability[b.dataset.tipMode]?.enabled===false;b.classList.toggle('selected',b.dataset.tipMode===discoveryState.mode);}
   for(const id of ['tips-universe','tips-holding']){const el=document.getElementById(id);if(el)el.disabled=discoveryState.busy;}
 }
 function discoveryProgress(message,progress=null,error=false){
@@ -156,6 +175,13 @@ async function scanDiscovery(refresh){
 }
 function updateTipFreshness(){
   if(typeof state==='undefined'||state.page!=='recommendations')return;
+  if(discoveryState.result){
+    const visible=new Map(bestStockTips(discoveryState.result.rows).map(row=>[row.instrument.instrument_key,row]));
+    for(const card of document.querySelectorAll('[data-tip-key]')){
+      const row=visible.get(card.dataset.tipKey),label=card.querySelector('.tip-data-status');
+      if(row&&label){const current=tipDataBadge(row);if(label.outerHTML!==current)label.outerHTML=current;}
+    }
+  }
   for(const card of document.querySelectorAll('[data-tip-expiry]')){
     const expiry=Date.parse(card.dataset.tipExpiry);if(!Number.isFinite(expiry)||Date.now()<expiry)continue;
     card.dataset.tipExpiry='';card.classList.remove('stock-tip-buy','stock-tip-idea');
@@ -179,6 +205,11 @@ async function reviewDerivative(key,button){
     document.getElementById('derivative-review')?.remove();
     const dialog=document.createElement('dialog');dialog.id='derivative-review';dialog.className='trade-review';dialog.dataset.expiry=row.idea.expires_at||'';
     dialog.innerHTML=`<div class="panel-head"><h2>Review your ${row.mode==='Options'?'option':'futures'} idea</h2><button class="icon-button" data-close-derivative aria-label="Close plan">×</button></div><div class="panel-body"><p data-derivative-status>${h(row.idea.decision==='REVIEW_TRADE'?'Checks passed for manual review. No order has been placed.':tipReason(row))}</p>${derivativeTipCard(row)}<div class="tips-next-steps"><h3>What to do next</h3><ol><li>Open your broker and search the exact contract shown above.</li><li>Match the expiry, call/put type, strike and lot size.</li><li>${row.idea.contract_levels?'Recheck the entry and spread, then enter your quantity and place your own stop and target orders.':'Check the current premium or futures quote. The underlying levels are not contract entry prices.'}</li><li>Use a practice trade if one lot does not fit your budget.</li></ol></div><div class="tip-card-actions">${(marketState.brokers||[]).map(b=>`<a class="button subtle" href="${h(b.url)}" target="_blank" rel="noopener noreferrer">Open ${h(b.name)} ↗</a>`).join('')}</div>${(row.data_errors||[]).map(e=>`<p>${h(e)}</p>`).join('')}<p class="small muted">Stock options and stock futures can require physical settlement near expiry. Check the broker’s exit deadline. This idea does not assess news or company events.</p></div>`;
+    if(row.idea.basis!=='VALIDATED_MODEL_AND_RULES'){
+      dialog.querySelector('[data-derivative-status]').textContent=tipReason(row);
+      const next=dialog.querySelector('.tips-next-steps');
+      if(next)next.innerHTML='<h3>Research only</h3><p>The underlying direction and any verified contract quote are for investigation. No validated out-of-sample strategy gate has passed for this F&O idea.</p>';
+    }
     dialog.querySelector('[data-derivative-review]')?.remove();dialog.querySelector('[data-stock]')?.remove();
     dialog.addEventListener('click',e=>{if(e.target===dialog||e.target.closest('[data-close-derivative]'))dialog.close();});dialog.addEventListener('close',()=>dialog.remove());
     document.body.append(dialog);dialog.showModal();updateTipFreshness();

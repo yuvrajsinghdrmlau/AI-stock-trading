@@ -196,6 +196,8 @@ def test_recommendation_job_keeps_partial_results_and_reports_missing_data(appli
     assert any('Fixture quote unavailable' in error for error in result['errors'])
     tcs = [r for r in result['rows'] if r['instrument']['symbol'] == 'TCS']
     assert len(tcs) == 2 and all(r['trade_plan']['decision'] == 'DATA_REQUIRED' for r in tcs)
+    assert all(r['data_status']['status']=='Unavailable' and r['data_status']['price'] is None for r in tcs)
+    assert all(r['data_status']['status'] in ('Delayed','Stale') for r in result['rows'] if r['instrument']['symbol']=='RELIANCE')
     assert all(timeframe == '1d' for _, timeframe, _ in calls)
     assert universe.watch() == []
     with TestClient(application) as client:

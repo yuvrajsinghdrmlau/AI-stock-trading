@@ -54,6 +54,7 @@ def normalize_quote(raw, instrument_key, now=None):
     status = 'FRESH_SNAPSHOT' if fresh else 'STALE_OR_UNVERIFIED'
     return {'instrument_key': instrument_key, 'last_price': ltp, 'bid': bid, 'ask': ask,
             'spread_bps': spread, 'volume': finite(raw.get('volume')),
+            'open_interest': finite(raw.get('oi', raw.get('open_interest'))),
             'feed_time': feed.isoformat() if feed else None, 'trade_time': trade.isoformat() if trade else None,
             'received_at': now.isoformat(), 'feed_age_seconds': age, 'trade_age_seconds': trade_age,
             'fresh': fresh, 'status': status, 'lower_circuit': finite(raw.get('lower_circuit_limit')),

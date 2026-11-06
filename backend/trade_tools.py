@@ -14,6 +14,7 @@ from .market_news import fetch_news
 from .price_alerts import PriceAlerts
 from .strategies import CATALOG
 from .recommendations import history_due
+from .mode_data import mode_dataset, mode_data
 
 
 class ToolRequest(BaseModel):
@@ -60,12 +61,16 @@ def register_tools(app,store,universe,broker,desk,job_running=lambda:False):
         inst,data,tf=resolve(body);intraday=universe.history(body.instrument_key,'15m')
         if body.refresh and tf!='15m' and history_due(intraday,'15m'):
             desk.refresh_history(body.instrument_key,'15m');intraday=universe.history(body.instrument_key,'15m')
+        feed=getattr(app.state,'live_candles',None)
+        intraday=mode_dataset('Intraday',body.instrument_key,intraday,feed)
+        if tf=='15m': data=intraday
         timing=entry_timing(intraday,body.side)
         scenario=None;error=None
         if data:
             try:scenario=exit_scenario(data,timing if tf=='15m' else {},store.account(),body.side,body.stop_method,body.reward_r)
             except ValueError as exc:error=str(exc)
         return {'instrument':inst,'timing':timing,'scenario':scenario,'scenario_error':error,
+                'data_status':mode_data('Intraday',body.instrument_key,dataset=intraday,feed=feed,broker_configured=broker.configured),
                 'timeframe':tf,'data_loaded':bool(data),'source':data['source'] if data else None,
                 'account':{k:store.settings()[k] for k in ('capital','risk_pct','exposure_pct')},
                 'note':'Entry timing and exit scenarios support manual review. Existing trade-plan data, price and account checks still apply.'}

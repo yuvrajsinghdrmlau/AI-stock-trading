@@ -124,7 +124,10 @@ def build_derivative_idea(instrument, dataset, contracts, product, holding, cata
         q = quotes.get(c['instrument_key']) or {}
         verified, stamp, received = recent_price(q, c['instrument_key'], now)
         spread = q.get('spread_bps'); bid = q.get('bid'); ask = q.get('ask')
-        if not verified or spread is None or not 0<=spread<=200 or not bid or not ask or bid > ask or (q.get('volume') or 0)<=0:
+        oi = q.get('open_interest', q.get('oi'))
+        if (not verified or spread is None or not 0<=spread<=200 or not bid or not ask
+                or bid > ask or (q.get('volume') or 0)<=0 or not isinstance(oi,(int,float))
+                or isinstance(oi,bool) or not math.isfinite(oi) or oi<=0):
             continue
         entry = ask if product == 'Options' or bull else bid
         # Premium stop is a fixed rule, not inferred from the stock's ATR.
@@ -159,5 +162,5 @@ def build_derivative_idea(instrument, dataset, contracts, product, holding, cata
             'Price and signal checks passed. Recheck spread and available funds before a manual order.' if limits_ok
             else 'One lot does not fit the local account’s position, loss or risk limits. Practise this setup instead.'])
         return base
-    idea['reasons'] = ['The selected contracts do not have a recent, liquid two-sided quote. Recheck on your broker.']
+    idea['reasons'] = ['Needs live quote: fresh contract price, bid/ask and open interest are required. Recheck on your broker.']
     return base

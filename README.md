@@ -72,11 +72,24 @@ Without a broker API, F&O cards can show the underlying direction, trigger, stop
 target and a listed contract to inspect. These are **underlying levels, not option
 premium or futures execution prices**. For current-session premium/futures plans,
 connect the existing authorized broker adapter. It checks the underlying trigger,
-contract quote time, spread, volume and local account limits before returning one-lot
+contract quote time, bid/ask, open interest, volume and local account limits before returning one-lot
 entry/stop/target levels. Option premium stops use a fixed 25% rule and 50% target;
 this is not an options-pricing forecast. Full premium loss and futures margin checks
 remain visible. Next-session F&O mode gives trend ideas to recheck during the session.
 The current implementation does not generate option-selling, spreads or commodity trades.
+
+Every Trade Tips card now displays **Live**, **Delayed**, **Stale**, **Partial**, or
+**Unavailable** and a short reason. Delivery/Swing scans request completed broker daily
+candles when the existing Upstox read-only client is configured, including when an
+older Yahoo cache exists. Otherwise they use Yahoo history marked Delayed. Intraday
+uses completed 15-minute candles from an injected `LiveCandleBuilder` only while its
+authenticated tick feed is current; otherwise existing historical research is labelled
+Delayed or Stale. F&O cards keep the direction and listed contract, but contract prices
+require a fresh broker quote with bid, ask and open interest. Scalper remains disabled:
+there is no authenticated tick adapter or validated scalping strategy connected yet.
+`backend/candle_builder.py` accepts verified feed events internally; it has no public
+tick-ingestion or order-placement route. The Angel One SmartAPI credentials and live
+feed are not connected by this change.
 
 Live-source verification on 4 November 2026 resolved 495 eligible cash equities from
 500 official constituents and 224 F&O underlyings. Counts change with listings,

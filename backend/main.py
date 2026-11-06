@@ -86,6 +86,7 @@ def create_app(data_dir=None,seed_demo=True,testing=False):
     app.state.token=token
     universe=Universe(store); broker=BrokerData(); models=Models(store,universe); desk=Desk(store,universe,broker,models)
     app.state.universe=universe; app.state.broker=broker; app.state.models=models; app.state.desk=desk
+    app.state.live_candles=None  # Attach a verified, read-only tick-fed builder when a provider is connected.
     register_v2(app,store,universe,broker,models,desk)
     @app.middleware('http')
     async def safety(request:Request,call_next):
