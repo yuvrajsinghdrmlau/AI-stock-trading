@@ -1,5 +1,7 @@
 # India Quant 2.1 - conditional trade research and manual broker workflow
 
+k
+
 **Local single-user developer release | 4 November 2026 | Python API + browser UI**
 
 This release extends the actual v1 application with a provider-backed instrument directory,
